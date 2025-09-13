@@ -27,8 +27,9 @@
     },
 
     /* Chrome Extension types */
-    "types": ["chrome", "node"]
+    "typeRoots": ["./node_modules/@types", "./src/types"],
+    "types": ["node"]
   },
-  "include": ["src", "*.html"],
+  "include": ["src", "*.html", "src/types"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }
