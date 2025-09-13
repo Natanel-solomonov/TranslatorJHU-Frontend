@@ -30,7 +30,6 @@
         "https://*.teams.microsoft.com/*"
       ],
       "js": ["content.js"],
-      "css": ["content.css"],
       "run_at": "document_end"
     }
   ],

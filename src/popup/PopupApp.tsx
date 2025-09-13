@@ -2,9 +2,9 @@ import React, { useState, useEffect } from "react";
 import {
   Play,
   Square,
-  Mic,
+  // Mic,
   MicOff,
-  Settings,
+  // Settings,
   Languages,
   Volume2,
   Wifi,
@@ -12,7 +12,7 @@ import {
   Monitor,
   AlertCircle,
 } from "lucide-react";
-import { useTranslationStore } from "../store/translationStore";
+// import { useTranslationStore } from "../store/translationStore";
 import toast, { Toaster } from "react-hot-toast";
 
 interface TabInfo {
@@ -28,10 +28,16 @@ const PopupApp: React.FC = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [sourceLanguage, setSourceLanguage] = useState("en");
   const [targetLanguage, setTargetLanguage] = useState("es");
+  const [isConnecting, setIsConnecting] = useState(false);
 
   useEffect(() => {
     loadActiveTabs();
     checkConnectionStatus();
+
+    // Set up periodic connection check
+    const connectionInterval = setInterval(() => {
+      checkConnectionStatus();
+    }, 2000);
 
     // Listen for background messages
     chrome.runtime.onMessage.addListener((message) => {
@@ -47,7 +53,11 @@ const PopupApp: React.FC = () => {
           break;
       }
     });
-  }, []);
+
+    return () => {
+      clearInterval(connectionInterval);
+    };
+  }, [selectedTab]);
 
   const loadActiveTabs = async () => {
     try {
@@ -71,10 +81,33 @@ const PopupApp: React.FC = () => {
         const response = await chrome.tabs.sendMessage(selectedTab.id, {
           type: "ping",
         });
+        console.log("Ping response:", response);
         setIsConnected(!!response?.pong);
       } catch (error) {
-        setIsConnected(false);
+        console.log("Ping failed:", error);
+        // Try to inject content script if it's not loaded
+        try {
+          await chrome.runtime.sendMessage({
+            type: "injectContentScript",
+            data: { tabId: selectedTab.id }
+          });
+          console.log("Attempted to inject content script");
+          // Wait a bit and try again
+          setTimeout(() => {
+            chrome.tabs.sendMessage(selectedTab.id, { type: "ping" })
+              .then(response => {
+                console.log("Ping after injection:", response);
+                setIsConnected(!!response?.pong);
+              })
+              .catch(() => setIsConnected(false));
+          }, 1000);
+        } catch (injectError) {
+          console.log("Failed to inject content script:", injectError);
+          setIsConnected(false);
+        }
       }
+    } else {
+      setIsConnected(false);
     }
   };
 
@@ -91,7 +124,7 @@ const PopupApp: React.FC = () => {
 
     try {
       // Start session via WebSocket
-      await chrome.runtime.sendMessage({
+      const wsResponse = await chrome.runtime.sendMessage({
         type: "websocket:send",
         data: {
           type: "session:start",
@@ -104,16 +137,33 @@ const PopupApp: React.FC = () => {
         },
       });
 
+      if (!wsResponse?.success) {
+        throw new Error(wsResponse?.error || "Failed to start WebSocket session");
+      }
+
       // Start audio capture on content script
-      await chrome.tabs.sendMessage(selectedTab.id, {
+      const audioResponse = await chrome.tabs.sendMessage(selectedTab.id, {
         type: "startAudioCapture",
       });
 
+      if (!audioResponse?.success) {
+        throw new Error("Failed to start audio capture");
+      }
+
       setIsRecording(true);
       toast.success("Translation session started");
+      
+      // Also send audio start message to backend
+      await chrome.runtime.sendMessage({
+        type: "websocket:send",
+        data: {
+          type: "audio:start",
+          payload: { tabId: selectedTab.id }
+        },
+      });
     } catch (error) {
       console.error("Failed to start session:", error);
-      toast.error("Failed to start session");
+      toast.error(`Failed to start session: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
 
@@ -126,6 +176,20 @@ const PopupApp: React.FC = () => {
         type: "stopAudioCapture",
       });
 
+      // Hide captions automatically when stopping
+      await chrome.tabs.sendMessage(selectedTab.id, {
+        type: "hideCaptions",
+      });
+
+      // Send audio stop message to backend
+      await chrome.runtime.sendMessage({
+        type: "websocket:send",
+        data: {
+          type: "audio:stop",
+          payload: { tabId: selectedTab.id }
+        },
+      });
+
       // Stop session via WebSocket
       await chrome.runtime.sendMessage({
         type: "websocket:send",
@@ -136,7 +200,7 @@ const PopupApp: React.FC = () => {
       });
 
       setIsRecording(false);
-      toast.success("Translation session stopped");
+      toast.success("Translation session stopped and captions hidden");
     } catch (error) {
       console.error("Failed to stop session:", error);
       toast.error("Failed to stop session");
@@ -147,14 +211,19 @@ const PopupApp: React.FC = () => {
     if (!selectedTab) return;
 
     try {
-      await chrome.tabs.sendMessage(selectedTab.id, {
+      const response = await chrome.tabs.sendMessage(selectedTab.id, {
         type: "showCaptions",
         data: { sourceLanguage, targetLanguage },
       });
-      toast.success("Captions overlay enabled");
+      
+      if (response?.success) {
+        toast.success("Captions overlay enabled");
+      } else {
+        throw new Error(response?.error || "Failed to show captions");
+      }
     } catch (error) {
       console.error("Failed to show captions:", error);
-      toast.error("Failed to enable captions");
+      toast.error(`Failed to enable captions: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
 
@@ -162,12 +231,51 @@ const PopupApp: React.FC = () => {
     if (!selectedTab) return;
 
     try {
-      await chrome.tabs.sendMessage(selectedTab.id, {
+      const response = await chrome.tabs.sendMessage(selectedTab.id, {
         type: "hideCaptions",
       });
-      toast.success("Captions overlay disabled");
+      
+      if (response?.success) {
+        toast.success("Captions overlay disabled");
+      } else {
+        throw new Error(response?.error || "Failed to hide captions");
+      }
     } catch (error) {
       console.error("Failed to hide captions:", error);
+      toast.error(`Failed to hide captions: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  const handleManualConnect = async () => {
+    if (!selectedTab) {
+      toast.error("Please select a meeting tab first");
+      return;
+    }
+
+    setIsConnecting(true);
+    try {
+      // Try to inject content script
+      await chrome.runtime.sendMessage({
+        type: "injectContentScript",
+        data: { tabId: selectedTab.id }
+      });
+      
+      // Wait a bit for injection to complete
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // Test connection
+      await checkConnectionStatus();
+      
+      if (isConnected) {
+        toast.success("Successfully connected!");
+      } else {
+        toast.error("Failed to connect. Please refresh the page and try again.");
+      }
+    } catch (error) {
+      console.error("Manual connect failed:", error);
+      toast.error(`Connection failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setIsConnecting(false);
     }
   };
 
@@ -215,7 +323,10 @@ const PopupApp: React.FC = () => {
               <WifiOff className="w-4 h-4 text-red-500" />
             )}
             {isRecording && (
-              <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+              <div className="flex items-center space-x-1">
+                <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+                <span className="text-xs text-red-600 font-medium">Recording</span>
+              </div>
             )}
           </div>
         </div>
@@ -226,15 +337,26 @@ const PopupApp: React.FC = () => {
 
       {/* Connection Status */}
       <div className="px-4 py-2 bg-gray-50 border-b border-gray-200">
-        <div className="flex items-center space-x-2 text-sm">
-          <div
-            className={`w-2 h-2 rounded-full ${
-              isConnected ? "bg-green-500" : "bg-red-500"
-            }`}
-          ></div>
-          <span className="text-gray-600">
-            {isConnected ? "Connected to backend" : "Backend disconnected"}
-          </span>
+        <div className="flex items-center justify-between text-sm">
+          <div className="flex items-center space-x-2">
+            <div
+              className={`w-2 h-2 rounded-full ${
+                isConnected ? "bg-green-500" : "bg-red-500"
+              }`}
+            ></div>
+            <span className="text-gray-600">
+              {isConnected ? "Connected to backend" : "Backend disconnected"}
+            </span>
+          </div>
+          {!isConnected && selectedTab && (
+            <button
+              onClick={handleManualConnect}
+              disabled={isConnecting}
+              className="text-xs bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white px-2 py-1 rounded"
+            >
+              {isConnecting ? "Connecting..." : "Connect"}
+            </button>
+          )}
         </div>
       </div>
 

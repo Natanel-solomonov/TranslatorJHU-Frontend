@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Icon Generator</title>
+</head>
+<body>
+    <canvas id="canvas" width="128" height="128"></canvas>
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Create a simple translation icon
+        ctx.fillStyle = '#4F46E5';
+        ctx.fillRect(0, 0, 128, 128);
+        
+        // Add text "T" for Translator
+        ctx.fillStyle = 'white';
+        ctx.font = 'bold 80px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('T', 64, 64);
+        
+        // Add a small globe icon
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(64, 100, 15, 0, 2 * Math.PI);
+        ctx.stroke();
+        
+        // Add lines for translation
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(45, 100);
+        ctx.lineTo(55, 100);
+        ctx.moveTo(73, 100);
+        ctx.lineTo(83, 100);
+        ctx.stroke();
+        
+        // Download the icon
+        const link = document.createElement('a');
+        link.download = 'icon128.png';
+        link.href = canvas.toDataURL();
+        link.click();
+    </script>
+</body>
+</html>

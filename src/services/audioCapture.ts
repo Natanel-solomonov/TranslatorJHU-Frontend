@@ -19,7 +19,9 @@ export class AudioCaptureService {
 
   async initialize(): Promise<void> {
     try {
-      // Request microphone access
+      console.log("Requesting microphone access...");
+      
+      // Request microphone access with explicit permission request
       this.micStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -30,27 +32,44 @@ export class AudioCaptureService {
         },
       });
 
+      console.log("Microphone access granted");
+
       // Create audio context for analysis
       this.audioContext = new AudioContext({ sampleRate: 16000 });
 
-      console.log("Audio capture initialized");
+      console.log("Audio capture initialized successfully");
     } catch (error) {
       console.error("Failed to initialize audio capture:", error);
-      throw error;
+      if (error instanceof Error && error.name === 'NotAllowedError') {
+        throw new Error("Microphone access denied. Please allow microphone access and try again.");
+      } else if (error instanceof Error && error.name === 'NotFoundError') {
+        throw new Error("No microphone found. Please connect a microphone and try again.");
+      } else {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        throw new Error(`Audio initialization failed: ${errorMessage}`);
+      }
     }
   }
 
   async startRecording(): Promise<void> {
-    if (!this.micStream || this.isRecording) {
+    if (!this.micStream) {
+      throw new Error("Microphone stream not available. Please initialize audio capture first.");
+    }
+    
+    if (this.isRecording) {
+      console.log("Recording already in progress");
       return;
     }
 
     try {
+      console.log("Starting audio recording...");
+      
       // Combine microphone and tab audio if available
       const audioTracks: MediaStreamTrack[] = [];
 
       // Add microphone tracks
       this.micStream.getAudioTracks().forEach((track) => {
+        console.log("Adding microphone track:", track.label);
         audioTracks.push(track);
       });
 
@@ -65,15 +84,29 @@ export class AudioCaptureService {
 
       this.mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0 && this.onAudioData) {
+          console.log("Audio data available:", event.data.size, "bytes");
           // Convert blob to array buffer and call callback
           event.data.arrayBuffer().then((buffer) => {
+            console.log("Converted to ArrayBuffer:", buffer.byteLength, "bytes");
             this.onAudioData?.(buffer);
+          }).catch(error => {
+            console.error("Failed to convert blob to ArrayBuffer:", error);
           });
+        } else {
+          console.log("No audio data or callback not set. Size:", event.data.size, "Callback:", !!this.onAudioData);
         }
       };
 
       this.mediaRecorder.onerror = (error) => {
         console.error("MediaRecorder error:", error);
+      };
+
+      this.mediaRecorder.onstart = () => {
+        console.log("MediaRecorder started");
+      };
+
+      this.mediaRecorder.onstop = () => {
+        console.log("MediaRecorder stopped");
       };
 
       // Start recording with small time slices for real-time streaming
@@ -85,7 +118,7 @@ export class AudioCaptureService {
         this.startVoiceActivityDetection();
       }
 
-      console.log("Audio recording started");
+      console.log("Audio recording started successfully");
     } catch (error) {
       console.error("Failed to start recording:", error);
       throw error;

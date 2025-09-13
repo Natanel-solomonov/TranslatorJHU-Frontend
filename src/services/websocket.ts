@@ -54,10 +54,13 @@ export class WebSocketService {
 
       this.ws.onmessage = (event) => {
         try {
+          console.log("WebSocket: Received message:", event.data);
           const message: WebSocketMessage = JSON.parse(event.data);
+          console.log("WebSocket: Parsed message:", message);
           this.handleMessage(message);
         } catch (error) {
-          console.error("Failed to parse WebSocket message:", error);
+          console.error("WebSocket: Failed to parse message:", error);
+          console.error("WebSocket: Raw data:", event.data);
         }
       };
 
@@ -101,23 +104,33 @@ export class WebSocketService {
 
   sendAudioData(audioData: ArrayBuffer): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      console.log("WebSocket: Sending audio data:", audioData.byteLength, "bytes");
+      console.log("WebSocket: Audio data type:", typeof audioData, "Constructor:", audioData.constructor.name);
       // Send binary audio data
       this.ws.send(audioData);
+      console.log("WebSocket: Audio data sent successfully");
+    } else {
+      console.warn("WebSocket: Cannot send audio data. WebSocket state:", this.ws?.readyState);
     }
   }
 
   private handleMessage(message: WebSocketMessage): void {
+    console.log("WebSocket: Handling message type:", message.type);
     switch (message.type) {
       case "transcription":
-        this.onTranscriptionCallbacks.forEach((callback) =>
-          callback(message.data as TranscriptionData)
-        );
+        console.log("WebSocket: Processing transcription:", message.data);
+        this.onTranscriptionCallbacks.forEach((callback) => {
+          console.log("WebSocket: Calling transcription callback");
+          callback(message.data as TranscriptionData);
+        });
         break;
 
       case "translation":
-        this.onTranslationCallbacks.forEach((callback) =>
-          callback(message.data as TranslationData)
-        );
+        console.log("WebSocket: Processing translation:", message.data);
+        this.onTranslationCallbacks.forEach((callback) => {
+          console.log("WebSocket: Calling translation callback");
+          callback(message.data as TranslationData);
+        });
         break;
 
       case "error":
@@ -125,7 +138,7 @@ export class WebSocketService {
         break;
 
       default:
-        console.log("Unknown message type:", message.type, message.data);
+        console.log("WebSocket: Unknown message type:", message.type, message.data);
     }
   }
 

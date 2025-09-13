@@ -9,7 +9,7 @@ interface ContentMessage {
 class ContentScript {
   private audioCapture: AudioCaptureService | null = null;
   private captionsOverlay: HTMLIFrameElement | null = null;
-  private isInitialized = false;
+  // private isInitialized = false;
 
   constructor() {
     this.initialize();
@@ -36,7 +36,7 @@ class ContentScript {
 
     // Listen for messages from background script and popup
     chrome.runtime.onMessage.addListener(
-      (message: ContentMessage, sender, sendResponse) => {
+      (message: ContentMessage, _sender, sendResponse) => {
         this.handleMessage(message, sendResponse);
         return true;
       }
@@ -48,7 +48,7 @@ class ContentScript {
     // Create captions overlay
     this.createCaptionsOverlay();
 
-    this.isInitialized = true;
+    // this.isInitialized = true;
   }
 
   private detectPlatform(): string {
@@ -69,16 +69,28 @@ class ContentScript {
     message: ContentMessage,
     sendResponse: (response?: any) => void
   ) {
+    console.log("Content script received message:", message.type);
+    
     switch (message.type) {
       case "startAudioCapture":
-        await this.startAudioCapture();
-        sendResponse({ success: true });
-        break;
+        try {
+          await this.startAudioCapture();
+          sendResponse({ success: true });
+        } catch (error) {
+          console.error("Failed to start audio capture:", error);
+          sendResponse({ success: false, error: error instanceof Error ? error.message : String(error) });
+        }
+        return true; // Keep message channel open
 
       case "stopAudioCapture":
-        this.stopAudioCapture();
-        sendResponse({ success: true });
-        break;
+        try {
+          this.stopAudioCapture();
+          sendResponse({ success: true });
+        } catch (error) {
+          console.error("Failed to stop audio capture:", error);
+          sendResponse({ success: false, error: error instanceof Error ? error.message : String(error) });
+        }
+        return true; // Keep message channel open
 
       case "captureStarted":
         // Tab capture started from background
@@ -92,48 +104,80 @@ class ContentScript {
 
       case "showCaptions":
         this.showCaptions(message.data);
-        break;
+        sendResponse({ success: true });
+        return true;
 
       case "hideCaptions":
         this.hideCaptions();
-        break;
+        sendResponse({ success: true });
+        return true;
 
       case "transcription":
+        console.log("Content script: Received transcription:", message.data);
+        // Forward to captions overlay
+        this.forwardToCaptionsOverlay(message);
+        break;
+        
       case "translation":
+        console.log("Content script: Received translation:", message.data);
         // Forward to captions overlay
         this.forwardToCaptionsOverlay(message);
         break;
 
       case "ping":
         sendResponse({ pong: true, platform: this.detectPlatform() });
-        break;
+        return true;
 
       default:
         console.log("Unknown message type:", message.type);
+        sendResponse({ success: false, error: "Unknown message type" });
+        return true;
     }
   }
 
   private async startAudioCapture() {
     if (!this.audioCapture) {
       console.error("Audio capture not initialized");
-      return;
+      throw new Error("Audio capture not initialized");
     }
 
     try {
+      console.log("Initializing audio capture...");
       await this.audioCapture.initialize();
+      
+      console.log("Starting audio recording...");
       await this.audioCapture.startRecording();
 
       // Set up audio data streaming to background
       this.audioCapture.onAudioData = (audioData: ArrayBuffer) => {
+        console.log("Content script: Sending audio data to background:", audioData.byteLength, "bytes");
+        
+        // Convert ArrayBuffer to Uint8Array for Chrome message passing
+        const uint8Array = new Uint8Array(audioData);
+        console.log("Content script: Converted to Uint8Array:", uint8Array.length, "bytes");
+        
         chrome.runtime.sendMessage({
           type: "sendAudioData",
-          data: audioData,
+          data: Array.from(uint8Array), // Convert to regular array for serialization
+        }).then(() => {
+          console.log("Content script: Audio data sent successfully");
+        }).catch(error => {
+          console.error("Content script: Failed to send audio data:", error);
         });
       };
 
-      console.log("Audio capture started");
+      console.log("Audio capture started successfully");
     } catch (error) {
       console.error("Failed to start audio capture:", error);
+      // Show user-friendly error message
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes("denied")) {
+        throw new Error("Microphone access denied. Please allow microphone access in your browser settings and try again.");
+      } else if (errorMessage.includes("not found")) {
+        throw new Error("No microphone found. Please connect a microphone and try again.");
+      } else {
+        throw error;
+      }
     }
   }
 
@@ -186,90 +230,90 @@ class ContentScript {
   }
 
   // Detect meeting state changes
-  private observeMeetingState() {
-    const platform = this.detectPlatform();
+  // private observeMeetingState() {
+  //   const platform = this.detectPlatform();
 
-    switch (platform) {
-      case "google-meet":
-        this.observeGoogleMeet();
-        break;
-      case "zoom":
-        this.observeZoom();
-        break;
-      case "teams":
-        this.observeTeams();
-        break;
-    }
-  }
+  //   switch (platform) {
+  //     case "google-meet":
+  //       this.observeGoogleMeet();
+  //       break;
+  //     case "zoom":
+  //       this.observeZoom();
+  //       break;
+  //     case "teams":
+  //       this.observeTeams();
+  //       break;
+  //   }
+  // }
 
-  private observeGoogleMeet() {
-    // Monitor Google Meet UI for meeting join/leave events
-    const observer = new MutationObserver((mutations) => {
-      // Look for meeting controls to detect join/leave
-      const joinButton = document.querySelector('[data-call-to-action="join"]');
-      const leaveButton = document.querySelector(
-        '[data-call-to-action="hangup"]'
-      );
+  // private observeGoogleMeet() {
+  //   // Monitor Google Meet UI for meeting join/leave events
+  //   const observer = new MutationObserver((_mutations) => {
+  //     // Look for meeting controls to detect join/leave
+  //     const joinButton = document.querySelector('[data-call-to-action="join"]');
+  //     const leaveButton = document.querySelector(
+  //       '[data-call-to-action="hangup"]'
+  //     );
 
-      if (joinButton) {
-        this.notifyMeetingState("meeting-available");
-      } else if (leaveButton) {
-        this.notifyMeetingState("meeting-active");
-      }
-    });
+  //     if (joinButton) {
+  //       this.notifyMeetingState("meeting-available");
+  //     } else if (leaveButton) {
+  //       this.notifyMeetingState("meeting-active");
+  //     }
+  //   });
 
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-    });
-  }
+  //   observer.observe(document.body, {
+  //     childList: true,
+  //     subtree: true,
+  //   });
+  // }
 
-  private observeZoom() {
-    // Monitor Zoom UI changes
-    const observer = new MutationObserver((mutations) => {
-      // Zoom-specific selectors
-      const inMeeting = document.querySelector(".meeting-client-main");
+  // private observeZoom() {
+  //   // Monitor Zoom UI changes
+  //   const observer = new MutationObserver((_mutations) => {
+  //     // Zoom-specific selectors
+  //     const inMeeting = document.querySelector(".meeting-client-main");
 
-      if (inMeeting) {
-        this.notifyMeetingState("meeting-active");
-      }
-    });
+  //     if (inMeeting) {
+  //       this.notifyMeetingState("meeting-active");
+  //     }
+  //   });
 
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-    });
-  }
+  //   observer.observe(document.body, {
+  //     childList: true,
+  //     subtree: true,
+  //   });
+  // }
 
-  private observeTeams() {
-    // Monitor Teams UI changes
-    const observer = new MutationObserver((mutations) => {
-      // Teams-specific selectors
-      const inCall = document.querySelector(
-        '[data-tid="calling-meeting-stage"]'
-      );
+  // private observeTeams() {
+  //   // Monitor Teams UI changes
+  //   const observer = new MutationObserver((_mutations) => {
+  //     // Teams-specific selectors
+  //     const inCall = document.querySelector(
+  //       '[data-tid="calling-meeting-stage"]'
+  //     );
 
-      if (inCall) {
-        this.notifyMeetingState("meeting-active");
-      }
-    });
+  //     if (inCall) {
+  //       this.notifyMeetingState("meeting-active");
+  //     }
+  //   });
 
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-    });
-  }
+  //   observer.observe(document.body, {
+  //     childList: true,
+  //     subtree: true,
+  //   });
+  // }
 
-  private notifyMeetingState(state: string) {
-    chrome.runtime.sendMessage({
-      type: "meetingStateChanged",
-      data: {
-        state,
-        platform: this.detectPlatform(),
-        url: window.location.href,
-      },
-    });
-  }
+  // private notifyMeetingState(state: string) {
+  //   chrome.runtime.sendMessage({
+  //     type: "meetingStateChanged",
+  //     data: {
+  //       state,
+  //       platform: this.detectPlatform(),
+  //       url: window.location.href,
+  //     },
+  //   });
+  // }
 }
 
 // Initialize content script

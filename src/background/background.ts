@@ -31,7 +31,7 @@ class BackgroundService {
     );
 
     // Monitor tab updates for meeting detection
-    chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
       if (changeInfo.status === "complete" && tab.url) {
         this.checkMeetingTab(tab);
       }
@@ -55,10 +55,12 @@ class BackgroundService {
     });
 
     this.wsService.onTranscription((data) => {
+      console.log("Background: Received transcription:", data);
       this.broadcastToTabs({ type: "transcription", data });
     });
 
     this.wsService.onTranslation((data) => {
+      console.log("Background: Received translation:", data);
       this.broadcastToTabs({ type: "translation", data });
     });
 
@@ -67,7 +69,7 @@ class BackgroundService {
 
   private async handleMessage(
     message: ExtensionMessage,
-    sender: chrome.runtime.MessageSender,
+    _sender: chrome.runtime.MessageSender,
     sendResponse: (response?: any) => void
   ) {
     switch (message.type) {
@@ -86,15 +88,29 @@ class BackgroundService {
         sendResponse({ tabs });
         break;
 
+      case "injectContentScript":
+        await this.injectContentScript(message.data.tabId);
+        sendResponse({ success: true });
+        break;
+
       case "sendAudioData":
         if (this.wsService && message.data) {
-          this.wsService.sendAudioData(message.data);
+          // Convert array back to ArrayBuffer
+          const uint8Array = new Uint8Array(message.data);
+          const arrayBuffer = uint8Array.buffer;
+          console.log("Background: Received audio data from content script:", arrayBuffer.byteLength, "bytes");
+          this.wsService.sendAudioData(arrayBuffer);
+        } else {
+          console.warn("Background: Cannot send audio data. WebSocket service:", !!this.wsService, "Data:", !!message.data);
         }
         break;
 
       case "websocket:send":
         if (this.wsService) {
           this.wsService.send(message.data.type, message.data.payload);
+          sendResponse({ success: true });
+        } else {
+          sendResponse({ success: false, error: "WebSocket not connected" });
         }
         break;
 
@@ -106,22 +122,22 @@ class BackgroundService {
   private async startTabCapture(tabId: number) {
     try {
       // Request tab capture permission
-      const stream = await chrome.tabCapture.capture({
+      chrome.tabCapture.capture({
         audio: true,
         video: false,
+      }, (stream) => {
+        if (stream) {
+          this.isCapturing = true;
+
+          // Send capture start message to content script
+          chrome.tabs.sendMessage(tabId, {
+            type: "captureStarted",
+            data: { streamId: stream.id },
+          });
+
+          console.log("Tab capture started for tab:", tabId);
+        }
       });
-
-      if (stream) {
-        this.isCapturing = true;
-
-        // Send capture start message to content script
-        chrome.tabs.sendMessage(tabId, {
-          type: "captureStarted",
-          data: { streamId: stream.id },
-        });
-
-        console.log("Tab capture started for tab:", tabId);
-      }
     } catch (error) {
       console.error("Failed to start tab capture:", error);
     }
@@ -150,7 +166,22 @@ class BackgroundService {
       ],
     });
 
-    return tabs.map((tab) => ({
+    // Also check for any active tab that might be a meeting platform
+    const activeTabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const allTabs = [...tabs, ...activeTabs.filter(tab => 
+      tab.url && (
+        tab.url.includes('meet.google.com') ||
+        tab.url.includes('zoom.us') ||
+        tab.url.includes('teams.microsoft.com')
+      )
+    )];
+
+    // Remove duplicates
+    const uniqueTabs = allTabs.filter((tab, index, self) => 
+      index === self.findIndex(t => t.id === tab.id)
+    );
+
+    return uniqueTabs.map((tab) => ({
       id: tab.id!,
       url: tab.url!,
       title: tab.title || "Unknown",
@@ -172,6 +203,18 @@ class BackgroundService {
         type: "meetingTabDetected",
         data: this.activeTab,
       });
+    }
+  }
+
+  private async injectContentScript(tabId: number) {
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ['content.js']
+      });
+      console.log(`Content script injected into tab ${tabId}`);
+    } catch (error) {
+      console.error(`Failed to inject content script into tab ${tabId}:`, error);
     }
   }
 

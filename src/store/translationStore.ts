@@ -43,7 +43,7 @@ interface TranslationState {
   clearCaptions: () => void;
 }
 
-export const useTranslationStore = create<TranslationState>((set, get) => ({
+export const useTranslationStore = create<TranslationState>((set, _get) => ({
   // Initial state
   currentSession: null,
   isRecording: false,
