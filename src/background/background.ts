@@ -16,6 +16,7 @@ class BackgroundService {
   private wsService: WebSocketService | null = null;
   private activeTab: TabInfo | null = null;
   private isCapturing = false;
+  private captionsShown = false;
 
   constructor() {
     this.initialize();
@@ -42,7 +43,7 @@ class BackgroundService {
   }
 
   private async initializeWebSocket() {
-    this.wsService = new WebSocketService("ws://localhost:8080");
+    this.wsService = new WebSocketService("ws://localhost:3001/ws");
 
     this.wsService.onConnect(() => {
       console.log("Background: WebSocket connected");
@@ -57,6 +58,15 @@ class BackgroundService {
     this.wsService.onTranscription((data) => {
       console.log("Background: Received transcription:", data);
       this.broadcastToTabs({ type: "transcription", data });
+
+      // Auto-show captions on first transcription
+      if (!this.captionsShown) {
+        this.captionsShown = true;
+        this.broadcastToTabs({
+          type: "showCaptions",
+          data: { autoShow: true },
+        });
+      }
     });
 
     this.wsService.onTranslation((data) => {
@@ -98,10 +108,19 @@ class BackgroundService {
           // Convert array back to ArrayBuffer
           const uint8Array = new Uint8Array(message.data);
           const arrayBuffer = uint8Array.buffer;
-          console.log("Background: Received audio data from content script:", arrayBuffer.byteLength, "bytes");
+          console.log(
+            "Background: Received audio data from content script:",
+            arrayBuffer.byteLength,
+            "bytes"
+          );
           this.wsService.sendAudioData(arrayBuffer);
         } else {
-          console.warn("Background: Cannot send audio data. WebSocket service:", !!this.wsService, "Data:", !!message.data);
+          console.warn(
+            "Background: Cannot send audio data. WebSocket service:",
+            !!this.wsService,
+            "Data:",
+            !!message.data
+          );
         }
         break;
 
@@ -122,22 +141,25 @@ class BackgroundService {
   private async startTabCapture(tabId: number) {
     try {
       // Request tab capture permission
-      chrome.tabCapture.capture({
-        audio: true,
-        video: false,
-      }, (stream) => {
-        if (stream) {
-          this.isCapturing = true;
+      chrome.tabCapture.capture(
+        {
+          audio: true,
+          video: false,
+        },
+        (stream) => {
+          if (stream) {
+            this.isCapturing = true;
 
-          // Send capture start message to content script
-          chrome.tabs.sendMessage(tabId, {
-            type: "captureStarted",
-            data: { streamId: stream.id },
-          });
+            // Send capture start message to content script
+            chrome.tabs.sendMessage(tabId, {
+              type: "captureStarted",
+              data: { streamId: stream.id },
+            });
 
-          console.log("Tab capture started for tab:", tabId);
+            console.log("Tab capture started for tab:", tabId);
+          }
         }
-      });
+      );
     } catch (error) {
       console.error("Failed to start tab capture:", error);
     }
@@ -167,18 +189,24 @@ class BackgroundService {
     });
 
     // Also check for any active tab that might be a meeting platform
-    const activeTabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    const allTabs = [...tabs, ...activeTabs.filter(tab => 
-      tab.url && (
-        tab.url.includes('meet.google.com') ||
-        tab.url.includes('zoom.us') ||
-        tab.url.includes('teams.microsoft.com')
-      )
-    )];
+    const activeTabs = await chrome.tabs.query({
+      active: true,
+      currentWindow: true,
+    });
+    const allTabs = [
+      ...tabs,
+      ...activeTabs.filter(
+        (tab) =>
+          tab.url &&
+          (tab.url.includes("meet.google.com") ||
+            tab.url.includes("zoom.us") ||
+            tab.url.includes("teams.microsoft.com"))
+      ),
+    ];
 
     // Remove duplicates
-    const uniqueTabs = allTabs.filter((tab, index, self) => 
-      index === self.findIndex(t => t.id === tab.id)
+    const uniqueTabs = allTabs.filter(
+      (tab, index, self) => index === self.findIndex((t) => t.id === tab.id)
     );
 
     return uniqueTabs.map((tab) => ({
@@ -210,11 +238,14 @@ class BackgroundService {
     try {
       await chrome.scripting.executeScript({
         target: { tabId },
-        files: ['content.js']
+        files: ["content.js"],
       });
       console.log(`Content script injected into tab ${tabId}`);
     } catch (error) {
-      console.error(`Failed to inject content script into tab ${tabId}:`, error);
+      console.error(
+        `Failed to inject content script into tab ${tabId}:`,
+        error
+      );
     }
   }
 

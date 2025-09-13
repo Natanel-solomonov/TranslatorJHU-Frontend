@@ -30,7 +30,7 @@ export class WebSocketService {
   private onTranslationCallbacks: ((data: TranslationData) => void)[] = [];
   private onErrorCallbacks: ((error: Event) => void)[] = [];
 
-  constructor(private url: string = "ws://localhost:8080") {}
+  constructor(private url: string = "ws://localhost:3001/ws") {}
 
   connect(): void {
     if (
@@ -104,13 +104,25 @@ export class WebSocketService {
 
   sendAudioData(audioData: ArrayBuffer): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      console.log("WebSocket: Sending audio data:", audioData.byteLength, "bytes");
-      console.log("WebSocket: Audio data type:", typeof audioData, "Constructor:", audioData.constructor.name);
+      console.log(
+        "WebSocket: Sending audio data:",
+        audioData.byteLength,
+        "bytes"
+      );
+      console.log(
+        "WebSocket: Audio data type:",
+        typeof audioData,
+        "Constructor:",
+        audioData.constructor.name
+      );
       // Send binary audio data
       this.ws.send(audioData);
       console.log("WebSocket: Audio data sent successfully");
     } else {
-      console.warn("WebSocket: Cannot send audio data. WebSocket state:", this.ws?.readyState);
+      console.warn(
+        "WebSocket: Cannot send audio data. WebSocket state:",
+        this.ws?.readyState
+      );
     }
   }
 
@@ -138,7 +150,11 @@ export class WebSocketService {
         break;
 
       default:
-        console.log("WebSocket: Unknown message type:", message.type, message.data);
+        console.log(
+          "WebSocket: Unknown message type:",
+          message.type,
+          message.data
+        );
     }
   }
 

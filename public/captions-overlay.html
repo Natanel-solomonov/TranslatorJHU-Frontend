@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TranslatorJHU Captions</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 20px;
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background: rgba(0, 0, 0, 0.8);
+        color: white;
+        border-radius: 12px;
+        backdrop-filter: blur(10px);
+        overflow: hidden;
+      }
+
+      .captions-container {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        height: 100%;
+        justify-content: center;
+        align-items: center;
+      }
+
+      .caption-item {
+        background: rgba(255, 255, 255, 0.1);
+        padding: 12px 20px;
+        border-radius: 8px;
+        border-left: 4px solid #4caf50;
+        max-width: 100%;
+        word-wrap: break-word;
+        opacity: 0;
+        transform: translateY(20px);
+        transition: all 0.3s ease;
+        font-size: 16px;
+        line-height: 1.4;
+      }
+
+      .caption-item.show {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      .caption-item.translation {
+        border-left-color: #2196f3;
+        background: rgba(33, 150, 243, 0.1);
+      }
+
+      .caption-item.original {
+        border-left-color: #ff9800;
+        background: rgba(255, 152, 0, 0.1);
+      }
+
+      .status-indicator {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: #f44336;
+        transition: background 0.3s ease;
+      }
+
+      .status-indicator.active {
+        background: #4caf50;
+        box-shadow: 0 0 10px rgba(76, 175, 80, 0.5);
+      }
+
+      .empty-state {
+        text-align: center;
+        opacity: 0.6;
+        font-style: italic;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="status-indicator" id="statusIndicator"></div>
+
+    <div class="captions-container" id="captionsContainer">
+      <div class="empty-state" id="emptyState">Waiting for speech...</div>
+    </div>
+
+    <script>
+      class CaptionsOverlay {
+        constructor() {
+          this.captionsContainer = document.getElementById("captionsContainer");
+          this.emptyState = document.getElementById("emptyState");
+          this.statusIndicator = document.getElementById("statusIndicator");
+          this.maxCaptions = 3; // Keep only last 3 captions
+          this.captionTimeout = 5000; // Hide captions after 5 seconds
+
+          this.setupMessageListener();
+        }
+
+        setupMessageListener() {
+          window.addEventListener("message", (event) => {
+            console.log("Captions overlay received message:", event.data);
+            this.handleMessage(event.data);
+          });
+        }
+
+        handleMessage(message) {
+          switch (message.type) {
+            case "showCaptions":
+              this.showCaptions(message.data);
+              break;
+            case "transcription":
+              this.addTranscription(message.data);
+              break;
+            case "translation":
+              this.addTranslation(message.data);
+              break;
+          }
+        }
+
+        showCaptions(data) {
+          console.log("Showing captions with data:", data);
+          this.emptyState.style.display = "none";
+          this.statusIndicator.classList.add("active");
+        }
+
+        addTranscription(data) {
+          console.log("Adding transcription:", data);
+          this.addCaption(data.text, "original");
+        }
+
+        addTranslation(data) {
+          console.log("Adding translation:", data);
+          this.addCaption(data.translatedText, "translation");
+        }
+
+        addCaption(text, type) {
+          // Hide empty state
+          this.emptyState.style.display = "none";
+
+          // Create caption element
+          const captionElement = document.createElement("div");
+          captionElement.className = `caption-item ${type}`;
+          captionElement.textContent = text;
+
+          // Add to container
+          this.captionsContainer.appendChild(captionElement);
+
+          // Show with animation
+          setTimeout(() => {
+            captionElement.classList.add("show");
+          }, 10);
+
+          // Auto-hide after timeout
+          setTimeout(() => {
+            captionElement.classList.remove("show");
+            setTimeout(() => {
+              if (captionElement.parentNode) {
+                captionElement.parentNode.removeChild(captionElement);
+              }
+            }, 300);
+          }, this.captionTimeout);
+
+          // Limit number of captions
+          const captions =
+            this.captionsContainer.querySelectorAll(".caption-item");
+          if (captions.length > this.maxCaptions) {
+            const oldestCaption = captions[0];
+            oldestCaption.classList.remove("show");
+            setTimeout(() => {
+              if (oldestCaption.parentNode) {
+                oldestCaption.parentNode.removeChild(oldestCaption);
+              }
+            }, 300);
+          }
+        }
+      }
+
+      // Initialize captions overlay
+      new CaptionsOverlay();
+    </script>
+  </body>
+</html>
+
+
+
