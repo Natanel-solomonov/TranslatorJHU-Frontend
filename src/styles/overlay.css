@@ -1,0 +1,136 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+.captions-overlay {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 10000;
+  pointer-events: none;
+  font-family: "Inter", system-ui, sans-serif;
+}
+
+.captions-container {
+  max-width: 600px;
+  margin: 0 auto 20px;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(8px);
+  border-radius: 12px;
+  padding: 16px;
+  color: white;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  pointer-events: auto;
+}
+
+.captions-controls {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.audio-toggle {
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  border-radius: 6px;
+  padding: 6px;
+  color: white;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.audio-toggle:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.captions-list {
+  space-y: 8px;
+}
+
+.caption-placeholder {
+  text-align: center;
+  color: rgba(255, 255, 255, 0.6);
+  font-style: italic;
+  padding: 20px;
+}
+
+.caption-item {
+  padding: 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border-left: 3px solid transparent;
+  transition: all 0.3s ease;
+  opacity: 0.7;
+}
+
+.caption-item.latest {
+  opacity: 1;
+  border-left-color: #3b82f6;
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.caption-item.processing {
+  border-left-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.caption-original {
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 4px;
+  line-height: 1.4;
+}
+
+.caption-translated {
+  font-size: 16px;
+  font-weight: 600;
+  color: #60a5fa;
+  line-height: 1.4;
+  margin-bottom: 8px;
+}
+
+.caption-meta {
+  height: 2px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+.confidence-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #ef4444, #f59e0b, #10b981);
+  border-radius: 1px;
+  transition: width 0.3s ease;
+}
+
+.processing-indicator {
+  animation: pulse 1.5s ease-in-out infinite;
+  color: #f59e0b;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* Responsive design */
+@media (max-width: 640px) {
+  .captions-container {
+    margin: 0 16px 16px;
+    max-width: none;
+  }
+
+  .caption-original {
+    font-size: 13px;
+  }
+
+  .caption-translated {
+    font-size: 15px;
+  }
+}
