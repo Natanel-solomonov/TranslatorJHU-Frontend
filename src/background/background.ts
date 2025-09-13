@@ -42,7 +42,7 @@ class BackgroundService {
   }
 
   private async initializeWebSocket() {
-    this.wsService = new WebSocketService("ws://localhost:8080");
+    this.wsService = new WebSocketService((import.meta as any).env?.VITE_WEBSOCKET_URL || "ws://localhost:8080");
 
     this.wsService.onConnect(() => {
       console.log("Background: WebSocket connected");

@@ -76,9 +76,12 @@ export class AudioCaptureService {
       // Create combined stream
       const combinedStream = new MediaStream(audioTracks);
 
-      // Create MediaRecorder for audio streaming
+      // Create MediaRecorder for audio streaming - use raw PCM if possible
+      const mimeType = this.getSupportedMimeType();
+      console.log("Using MIME type:", mimeType);
+      
       this.mediaRecorder = new MediaRecorder(combinedStream, {
-        mimeType: this.getSupportedMimeType(),
+        mimeType: mimeType,
         audioBitsPerSecond: 16000,
       });
 
@@ -164,19 +167,22 @@ export class AudioCaptureService {
 
   private getSupportedMimeType(): string {
     const mimeTypes = [
+      "audio/wav",
+      "audio/webm;codecs=pcm",
       "audio/webm;codecs=opus",
       "audio/webm",
       "audio/ogg;codecs=opus",
       "audio/mp4",
-      "audio/wav",
     ];
 
     for (const mimeType of mimeTypes) {
       if (MediaRecorder.isTypeSupported(mimeType)) {
+        console.log("Selected MIME type:", mimeType);
         return mimeType;
       }
     }
 
+    console.log("Using fallback MIME type: audio/webm");
     return "audio/webm"; // fallback
   }
 

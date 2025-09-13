@@ -30,7 +30,7 @@ export class WebSocketService {
   private onTranslationCallbacks: ((data: TranslationData) => void)[] = [];
   private onErrorCallbacks: ((error: Event) => void)[] = [];
 
-  constructor(private url: string = "ws://localhost:8080") {}
+  constructor(private url: string = (import.meta as any).env?.VITE_WEBSOCKET_URL || "ws://localhost:8080") {}
 
   connect(): void {
     if (

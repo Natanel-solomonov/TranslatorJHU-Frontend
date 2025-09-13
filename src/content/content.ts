@@ -1,5 +1,5 @@
 // Content script for meeting platforms (Zoom, Google Meet, Teams)
-import { AudioCaptureService } from "../services/audioCapture";
+import "./googleMeetCaptionDetector";
 
 interface ContentMessage {
   type: string;
@@ -7,8 +7,8 @@ interface ContentMessage {
 }
 
 class ContentScript {
-  private audioCapture: AudioCaptureService | null = null;
   private captionsOverlay: HTMLIFrameElement | null = null;
+  private isTranslationRunning = false;
   // private isInitialized = false;
 
   constructor() {
@@ -42,14 +42,29 @@ class ContentScript {
       }
     );
 
-    // Initialize audio capture
-    this.audioCapture = new AudioCaptureService();
+    // Google Meet caption monitoring is initialized automatically
+
+    // Listen for messages from the caption monitor
+    window.addEventListener('message', (event) => {
+      if (event.data.type === 'TRANSLATORJHU_CAPTION_TEXT') {
+        this.handleCaptionText(event.data.data);
+      }
+    });
+
+    // Listen for WebSocket messages from background script
+    chrome.runtime.onMessage.addListener((message, _sender, _sendResponse) => {
+      if (message.type === 'websocket:message' && message.data) {
+        this.handleWebSocketMessage(message.data);
+      }
+    });
 
     // Create captions overlay
     this.createCaptionsOverlay();
 
     // this.isInitialized = true;
   }
+
+
 
   private detectPlatform(): string {
     const hostname = window.location.hostname;
@@ -72,22 +87,22 @@ class ContentScript {
     console.log("Content script received message:", message.type);
     
     switch (message.type) {
-      case "startAudioCapture":
+      case "startCaptionMonitoring":
         try {
-          await this.startAudioCapture();
+          this.startCaptionMonitoring(message.data?.targetLanguage || 'es');
           sendResponse({ success: true });
         } catch (error) {
-          console.error("Failed to start audio capture:", error);
+          console.error("Failed to start caption monitoring:", error);
           sendResponse({ success: false, error: error instanceof Error ? error.message : String(error) });
         }
         return true; // Keep message channel open
 
-      case "stopAudioCapture":
+      case "stopCaptionMonitoring":
         try {
-          this.stopAudioCapture();
+          this.stopCaptionMonitoring();
           sendResponse({ success: true });
         } catch (error) {
-          console.error("Failed to stop audio capture:", error);
+          console.error("Failed to stop caption monitoring:", error);
           sendResponse({ success: false, error: error instanceof Error ? error.message : String(error) });
         }
         return true; // Keep message channel open
@@ -128,6 +143,11 @@ class ContentScript {
         sendResponse({ pong: true, platform: this.detectPlatform() });
         return true;
 
+      case "getTranslationStatus":
+        // Check if translation is currently running
+        sendResponse({ isRunning: this.isTranslationRunning });
+        return true;
+
       default:
         console.log("Unknown message type:", message.type);
         sendResponse({ success: false, error: "Unknown message type" });
@@ -135,56 +155,57 @@ class ContentScript {
     }
   }
 
-  private async startAudioCapture() {
-    if (!this.audioCapture) {
-      console.error("Audio capture not initialized");
-      throw new Error("Audio capture not initialized");
-    }
 
+  private startCaptionMonitoring(targetLanguage: string) {
+    this.isTranslationRunning = true;
+    window.postMessage({ type: 'startCaptionMonitoring', targetLanguage }, '*');
+    
+    // Send message to popup that translation started
+    chrome.runtime.sendMessage({
+      type: "translation:started"
+    });
+  }
+
+  private stopCaptionMonitoring() {
+    this.isTranslationRunning = false;
+    window.postMessage({ type: 'stopCaptionMonitoring' }, '*');
+    
+    // Send message to popup that translation stopped
+    chrome.runtime.sendMessage({
+      type: "translation:stopped"
+    });
+  }
+
+  private async handleCaptionText(message: any) {
+    console.log('📝 Content script received caption text:', message);
+    
     try {
-      console.log("Initializing audio capture...");
-      await this.audioCapture.initialize();
-      
-      console.log("Starting audio recording...");
-      await this.audioCapture.startRecording();
-
-      // Set up audio data streaming to background
-      this.audioCapture.onAudioData = (audioData: ArrayBuffer) => {
-        console.log("Content script: Sending audio data to background:", audioData.byteLength, "bytes");
-        
-        // Convert ArrayBuffer to Uint8Array for Chrome message passing
-        const uint8Array = new Uint8Array(audioData);
-        console.log("Content script: Converted to Uint8Array:", uint8Array.length, "bytes");
-        
-        chrome.runtime.sendMessage({
-          type: "sendAudioData",
-          data: Array.from(uint8Array), // Convert to regular array for serialization
-        }).then(() => {
-          console.log("Content script: Audio data sent successfully");
-        }).catch(error => {
-          console.error("Content script: Failed to send audio data:", error);
-        });
+      // Send to backend via WebSocket
+      const wsMessage = {
+        type: 'websocket:send',
+        data: message
       };
-
-      console.log("Audio capture started successfully");
-    } catch (error) {
-      console.error("Failed to start audio capture:", error);
-      // Show user-friendly error message
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      if (errorMessage.includes("denied")) {
-        throw new Error("Microphone access denied. Please allow microphone access in your browser settings and try again.");
-      } else if (errorMessage.includes("not found")) {
-        throw new Error("No microphone found. Please connect a microphone and try again.");
+      
+      const response = await chrome.runtime.sendMessage(wsMessage);
+      if (response?.success) {
+        console.log('✅ Caption text sent to backend successfully');
       } else {
-        throw error;
+        console.error('❌ Failed to send caption text to backend:', response?.error);
       }
+    } catch (error) {
+      console.error('❌ Error handling caption text:', error);
     }
   }
 
-  private stopAudioCapture() {
-    if (this.audioCapture) {
-      this.audioCapture.stopRecording();
-      console.log("Audio capture stopped");
+  private handleWebSocketMessage(data: any) {
+    console.log('📨 Content script received WebSocket message:', data);
+    
+    // Forward translation messages to the caption monitor
+    if (data.type === 'translation') {
+      window.postMessage({
+        type: 'TRANSLATORJHU_TRANSLATION',
+        data: data
+      }, '*');
     }
   }
 

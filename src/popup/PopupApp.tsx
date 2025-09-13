@@ -11,9 +11,14 @@ import {
   WifiOff,
   Monitor,
   AlertCircle,
+  User,
+  LogOut,
 } from "lucide-react";
 // import { useTranslationStore } from "../store/translationStore";
 import toast, { Toaster } from "react-hot-toast";
+import { AuthModal } from "../components/AuthModal";
+import { VoiceEnrollment } from "../components/VoiceEnrollment";
+import { authService, User as AuthUser } from "../services/authService";
 
 interface TabInfo {
   id: number;
@@ -25,14 +30,20 @@ const PopupApp: React.FC = () => {
   const [activeTabs, setActiveTabs] = useState<TabInfo[]>([]);
   const [selectedTab, setSelectedTab] = useState<TabInfo | null>(null);
   const [isConnected, setIsConnected] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
+  const [isMonitoring, setIsMonitoring] = useState(false);
   const [sourceLanguage, setSourceLanguage] = useState("en");
   const [targetLanguage, setTargetLanguage] = useState("es");
   const [isConnecting, setIsConnecting] = useState(false);
+  
+  // Authentication state
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [showVoiceEnrollment, setShowVoiceEnrollment] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  // const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   useEffect(() => {
-    loadActiveTabs();
-    checkConnectionStatus();
+    initializePopup();
 
     // Set up periodic connection check
     const connectionInterval = setInterval(() => {
@@ -51,6 +62,14 @@ const PopupApp: React.FC = () => {
         case "meetingTabDetected":
           loadActiveTabs();
           break;
+        case "translation:started":
+          setIsMonitoring(true);
+          saveTranslationState(true);
+          break;
+        case "translation:stopped":
+          setIsMonitoring(false);
+          saveTranslationState(false);
+          break;
       }
     });
 
@@ -58,6 +77,27 @@ const PopupApp: React.FC = () => {
       clearInterval(connectionInterval);
     };
   }, [selectedTab]);
+
+  const initializePopup = async () => {
+    setIsLoading(true);
+    
+    // First check if translation is running
+    const isTranslationRunning = await loadTranslationState();
+    
+    // If translation is running, skip authentication
+    if (isTranslationRunning) {
+      await loadActiveTabs();
+      await checkConnectionStatus();
+      setIsLoading(false);
+      return;
+    }
+    
+    // If not running, proceed with normal initialization
+    await loadActiveTabs();
+    await checkConnectionStatus();
+    await checkAuthenticationStatus();
+    setIsLoading(false);
+  };
 
   const loadActiveTabs = async () => {
     try {
@@ -71,6 +111,62 @@ const PopupApp: React.FC = () => {
       }
     } catch (error) {
       console.error("Failed to load active tabs:", error);
+    }
+  };
+
+  const loadTranslationState = async () => {
+    try {
+      const result = await chrome.storage.local.get(['isTranslationRunning', 'translationTabId']);
+      if (result.isTranslationRunning && result.translationTabId) {
+        // Find the tab that was running translation
+        const response = await chrome.runtime.sendMessage({
+          type: "getActiveTabs",
+        });
+        const tabs = response.tabs || [];
+        const translationTab = tabs.find((tab: TabInfo) => tab.id === result.translationTabId);
+        if (translationTab) {
+          setSelectedTab(translationTab);
+          
+          // Verify translation is actually running on that tab
+          try {
+            const verificationResponse = await chrome.tabs.sendMessage(translationTab.id, {
+              type: "getTranslationStatus"
+            });
+            
+            if (verificationResponse?.isRunning) {
+              setIsMonitoring(true);
+              return true; // Translation is running
+            } else {
+              // Translation not actually running, clear state
+              await chrome.storage.local.remove(['isTranslationRunning', 'translationTabId']);
+              setIsMonitoring(false);
+              return false;
+            }
+          } catch (error) {
+            // Tab not accessible, clear state
+            await chrome.storage.local.remove(['isTranslationRunning', 'translationTabId']);
+            setIsMonitoring(false);
+            return false;
+          }
+        }
+      }
+      setIsMonitoring(false);
+      return false;
+    } catch (error) {
+      console.error("Failed to load translation state:", error);
+      setIsMonitoring(false);
+      return false;
+    }
+  };
+
+  const saveTranslationState = async (isRunning: boolean) => {
+    try {
+      await chrome.storage.local.set({
+        isTranslationRunning: isRunning,
+        translationTabId: isRunning ? selectedTab?.id : null
+      });
+    } catch (error) {
+      console.error("Failed to save translation state:", error);
     }
   };
 
@@ -141,26 +237,28 @@ const PopupApp: React.FC = () => {
         throw new Error(wsResponse?.error || "Failed to start WebSocket session");
       }
 
-      // Start audio capture on content script
-      const audioResponse = await chrome.tabs.sendMessage(selectedTab.id, {
-        type: "startAudioCapture",
+      // Start caption monitoring on content script
+      const captionResponse = await chrome.tabs.sendMessage(selectedTab.id, {
+        type: "startCaptionMonitoring",
+        data: {
+          targetLanguage: targetLanguage
+        }
       });
 
-      if (!audioResponse?.success) {
-        throw new Error("Failed to start audio capture");
+      if (!captionResponse?.success) {
+        throw new Error("Failed to start caption monitoring");
       }
 
-      setIsRecording(true);
-      toast.success("Translation session started");
+      setIsMonitoring(true);
+      saveTranslationState(true);
+      toast.success("Caption translation started - monitoring Google Meet captions");
       
-      // Also send audio start message to backend
-      await chrome.runtime.sendMessage({
-        type: "websocket:send",
-        data: {
-          type: "audio:start",
-          payload: { tabId: selectedTab.id }
-        },
+      // Send message to background script
+      chrome.runtime.sendMessage({
+        type: "translation:started",
+        data: { tabId: selectedTab.id }
       });
+      
     } catch (error) {
       console.error("Failed to start session:", error);
       toast.error(`Failed to start session: ${error instanceof Error ? error.message : String(error)}`);
@@ -171,23 +269,14 @@ const PopupApp: React.FC = () => {
     if (!selectedTab) return;
 
     try {
-      // Stop audio capture
+      // Stop caption monitoring
       await chrome.tabs.sendMessage(selectedTab.id, {
-        type: "stopAudioCapture",
+        type: "stopCaptionMonitoring",
       });
 
       // Hide captions automatically when stopping
       await chrome.tabs.sendMessage(selectedTab.id, {
         type: "hideCaptions",
-      });
-
-      // Send audio stop message to backend
-      await chrome.runtime.sendMessage({
-        type: "websocket:send",
-        data: {
-          type: "audio:stop",
-          payload: { tabId: selectedTab.id }
-        },
       });
 
       // Stop session via WebSocket
@@ -199,8 +288,15 @@ const PopupApp: React.FC = () => {
         },
       });
 
-      setIsRecording(false);
-      toast.success("Translation session stopped and captions hidden");
+      setIsMonitoring(false);
+      saveTranslationState(false);
+      toast.success("Caption translation stopped");
+      
+      // Send message to background script
+      chrome.runtime.sendMessage({
+        type: "translation:stopped",
+        data: { tabId: selectedTab.id }
+      });
     } catch (error) {
       console.error("Failed to stop session:", error);
       toast.error("Failed to stop session");
@@ -286,6 +382,48 @@ const PopupApp: React.FC = () => {
     return "Unknown Platform";
   };
 
+  // Authentication functions
+  const checkAuthenticationStatus = () => {
+    const user = authService.getCurrentUser();
+    if (user) {
+      setCurrentUser(user);
+      
+      // Check if user needs voice enrollment
+      if (!user.voiceEnrolled) {
+        setShowVoiceEnrollment(true);
+      }
+    } else {
+      setShowAuthModal(true);
+    }
+  };
+
+  const handleAuthSuccess = (user: AuthUser) => {
+    setCurrentUser(user);
+    setShowAuthModal(false);
+    
+    // Check if user needs voice enrollment
+    if (!user.voiceEnrolled) {
+      setShowVoiceEnrollment(true);
+    }
+  };
+
+  const handleVoiceEnrollmentComplete = () => {
+    setShowVoiceEnrollment(false);
+    toast.success("Voice enrollment completed!");
+  };
+
+  const handleSkipVoiceEnrollment = () => {
+    setShowVoiceEnrollment(false);
+    toast.success("Voice enrollment skipped. You can complete it later.");
+  };
+
+  const handleLogout = () => {
+    authService.logout();
+    setCurrentUser(null);
+    setShowAuthModal(true);
+    toast.success("Logged out successfully");
+  };
+
   const languages = [
     { code: "en", name: "English" },
     { code: "es", name: "Spanish" },
@@ -298,6 +436,16 @@ const PopupApp: React.FC = () => {
     { code: "ko", name: "Korean" },
     { code: "ar", name: "Arabic" },
   ];
+
+  // Show loading screen while initializing
+  if (isLoading) {
+    return (
+      <div className="w-full h-full bg-white flex flex-col items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+        <p className="mt-2 text-sm text-gray-600">Loading...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full h-full bg-white flex flex-col">
@@ -317,21 +465,39 @@ const PopupApp: React.FC = () => {
         <div className="flex items-center justify-between">
           <h1 className="text-lg font-semibold text-gray-900">TranslatorJHU</h1>
           <div className="flex items-center space-x-2">
+            {currentUser && (
+              <div className="flex items-center space-x-2">
+                <div className="flex items-center space-x-1 text-sm text-gray-600">
+                  <User className="w-4 h-4" />
+                  <span>{currentUser.username}</span>
+                  {currentUser.voiceEnrolled && (
+                    <div className="w-2 h-2 bg-green-500 rounded-full" title="Voice enrolled"></div>
+                  )}
+                </div>
+                <button
+                  onClick={handleLogout}
+                  className="p-1 text-gray-400 hover:text-gray-600"
+                  title="Logout"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
+            )}
             {isConnected ? (
               <Wifi className="w-4 h-4 text-green-500" />
             ) : (
               <WifiOff className="w-4 h-4 text-red-500" />
             )}
-            {isRecording && (
+            {isMonitoring && (
               <div className="flex items-center space-x-1">
                 <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
-                <span className="text-xs text-red-600 font-medium">Recording</span>
+                <span className="text-xs text-red-600 font-medium">Monitoring</span>
               </div>
             )}
           </div>
         </div>
         <p className="text-sm text-gray-500 mt-1">
-          Real-time translation for video meetings
+          {isMonitoring ? "Translation is active - monitoring captions" : "Real-time translation for video meetings"}
         </p>
       </div>
 
@@ -438,7 +604,7 @@ const PopupApp: React.FC = () => {
 
       {/* Controls */}
       <div className="p-4 space-y-3">
-        {!isRecording ? (
+        {!isMonitoring ? (
           <button
             onClick={handleStartSession}
             disabled={!selectedTab || !isConnected}
@@ -484,6 +650,18 @@ const PopupApp: React.FC = () => {
           Natural voice synthesis with ElevenLabs
         </div>
       </div>
+
+      {/* Authentication Modals - Only show when translation is not running */}
+      {!isMonitoring && showAuthModal && (
+        <AuthModal onAuthSuccess={handleAuthSuccess} />
+      )}
+
+      {!isMonitoring && showVoiceEnrollment && (
+        <VoiceEnrollment 
+          onEnrollmentComplete={handleVoiceEnrollmentComplete}
+          onSkip={handleSkipVoiceEnrollment}
+        />
+      )}
     </div>
   );
 };
