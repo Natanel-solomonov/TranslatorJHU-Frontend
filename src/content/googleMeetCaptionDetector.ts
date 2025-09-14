@@ -18,8 +18,8 @@ class GoogleMeetCaptionDetector {
   private bufferTimeout: number | null = null; // Timeout for word buffer
   private processedTexts = new Set<string>(); // Track processed texts to prevent duplicates
   private skippedTexts = new Set<string>(); // Track permanently skipped texts to prevent infinite loops
-  private baselineText = ''; // Text that was present when monitoring started
   private isFirstCaption = true; // Track if this is the first caption after starting
+  private lastSeenCaptionElement: HTMLElement | null = null; // Track the last seen caption element
 
   constructor() {
     this.init();
@@ -79,6 +79,7 @@ class GoogleMeetCaptionDetector {
     // Add close button functionality
     const closeBtn = overlay.querySelector('#translatorjhu-close');
     closeBtn?.addEventListener('click', () => this.hideOverlay());
+    
   }
 
   private setupMessageListener() {
@@ -101,16 +102,16 @@ class GoogleMeetCaptionDetector {
     this.processedWords.clear(); // Reset processed words when starting
     this.processedTexts.clear(); // Reset processed texts
     this.skippedTexts.clear(); // Reset skipped texts
-    this.baselineText = ''; // Reset baseline
     this.isFirstCaption = true; // Reset first caption flag
     this.lastProcessedText = ''; // Reset last processed text
+    this.lastSeenCaptionElement = null; // Reset last seen caption element
 
     this.setupMutationObserver();
     this.checkInterval = window.setInterval(() => {
       if (this.monitoringActive) {
         this.checkForClosedCaptions();
       }
-    }, 500); // 500ms for faster response
+    }, 250); // 250ms for very fast response to new lines
     this.checkForClosedCaptions();
   }
 
@@ -136,7 +137,6 @@ class GoogleMeetCaptionDetector {
     this.wordBuffer = '';
     this.processedTexts.clear();
     this.skippedTexts.clear();
-    this.baselineText = '';
     this.isFirstCaption = true;
   }
 
@@ -214,25 +214,62 @@ class GoogleMeetCaptionDetector {
       'div[jsname="r4nke"]'
     ];
     
+    // Parent container selector for all caption lines (provided by user)
+    const parentContainerSelector = '#yDmH0d > c-wiz > div > div > div.TKU8Od > div.crqnQb > div > div.fJsklc.nulMpf.Didmac.G03iKb.hLkVuf > div > div > div.DtJ7e > div > div';
+    
     try {
       let captionContainer = null;
       let foundText = '';
       
-      // Try each selector until we find captions (silent search)
-      for (const selector of captionSelectors) {
-        const elements = document.querySelectorAll(selector);
+      // First, try to find the parent container and get the newest child
+      const parentContainer = document.querySelector(parentContainerSelector);
+      if (parentContainer) {
+        // Look for caption elements within the parent container
+        const childSelectors = [
+          'div.nMcdL.bj4p3b > div.ygicle.VbkSUe',
+          'div.ygicle.VbkSUe',
+          'div[class*="ygicle"]',
+          'div[class*="VbkSUe"]'
+        ];
         
-        for (const element of elements) {
-          const text = element.textContent?.trim();
+        for (const childSelector of childSelectors) {
+          const childElements = parentContainer.querySelectorAll(childSelector);
           
-          if (text && text.length >= 3 && this.isValidClosedCaption(text)) {
-            captionContainer = element;
-            foundText = text;
-            break;
+          // Get the LAST (newest) child element
+          for (let i = childElements.length - 1; i >= 0; i--) {
+            const element = childElements[i];
+            const text = element.textContent?.trim();
+            
+            if (text && text.length >= 3 && this.isValidClosedCaption(text)) {
+              captionContainer = element;
+              foundText = text;
+              break;
+            }
           }
+          
+          if (foundText) break;
         }
-        
-        if (foundText) break;
+      }
+      
+      // If parent approach didn't work, try each selector until we find captions (silent search)
+      if (!foundText) {
+        for (const selector of captionSelectors) {
+          const elements = document.querySelectorAll(selector);
+          
+          // For multiple people talking, get the LAST (newest) caption element
+          for (let i = elements.length - 1; i >= 0; i--) {
+            const element = elements[i];
+            const text = element.textContent?.trim();
+            
+            if (text && text.length >= 3 && this.isValidClosedCaption(text)) {
+              captionContainer = element;
+              foundText = text;
+              break;
+            }
+          }
+          
+          if (foundText) break;
+        }
       }
       
       // If no captions found with specific selectors, try a broader search for any text that looks like speech
@@ -240,7 +277,9 @@ class GoogleMeetCaptionDetector {
         // Try to find any element with caption-related classes
         const captionElements = document.querySelectorAll('div[class*="ygicle"], div[class*="VbkSUe"], div[class*="nMcdL"], div[class*="bj4p3b"]');
         
-        for (const element of captionElements) {
+        // For multiple people talking, get the LAST (newest) caption element
+        for (let i = captionElements.length - 1; i >= 0; i--) {
+          const element = captionElements[i];
           const text = element.textContent?.trim();
           if (text && text.length >= 3 && text.length <= 200 && this.isValidClosedCaption(text)) {
             captionContainer = element;
@@ -253,7 +292,6 @@ class GoogleMeetCaptionDetector {
       if (captionContainer && foundText) {
         // On first caption after starting monitoring, set baseline
         if (this.isFirstCaption) {
-          this.baselineText = foundText;
           this.lastProcessedText = foundText;
           this.isFirstCaption = false;
           console.log(`🎯 BASELINE SET: "${foundText}"`);
@@ -266,32 +304,51 @@ class GoogleMeetCaptionDetector {
           return; // Skip this text permanently
         }
         
-        // No content filtering - process all new content
-        
-        // Only process if text is different from last processed AND longer than baseline
-        if (foundText !== this.lastProcessedText && foundText.length > this.baselineText.length) {
-          // Check if this is actually new content (longer than what we've seen)
-          const isNewContent = foundText.length > this.lastProcessedText.length;
+        // Process new caption elements
+        if (foundText !== this.lastProcessedText) {
+          console.log(`🎯 NEW CAPTION DETECTED: "${foundText}"`);
           
-          if (isNewContent) {
-            console.log(`🎯 NEW CAPTION DETECTED: "${foundText}"`);
+          
+          // Check if this is the same element (same person continuing) or different element (new person)
+          const isSameElement = captionContainer === this.lastSeenCaptionElement;
+          
+          if (isSameElement) {
+            // Same person - use word buffer logic with length condition
+            console.log(`🔄 SAME SPEAKER CONTINUING: "${foundText}"`);
             
-            // Extract only the NEW words that were added
-            const newWords = this.extractNewWords(this.lastProcessedText, foundText);
-            
-            if (newWords && newWords.trim().length > 0) {
-              console.log(`🆕 NEW WORDS EXTRACTED: "${newWords}"`);
+            // Only process if text is longer than what we've seen (new words added)
+            if (foundText.length > this.lastProcessedText.length) {
+              console.log(`🆕 NEW WORDS ADDED: "${foundText}"`);
               
-              // Update last processed text first
-              this.lastProcessedText = foundText;
+              // Extract only the NEW words that were added
+              const newWords = this.extractNewWords(this.lastProcessedText, foundText);
               
-              // Add only the new words to buffer
-              this.addToWordBuffer(newWords);
-            } else {
-              // If no new words extracted, just update the last processed text
-              this.lastProcessedText = foundText;
+              if (newWords && newWords.trim().length > 0) {
+                console.log(`🆕 NEW WORDS EXTRACTED: "${newWords}"`);
+                
+                // Update last processed text first
+                this.lastProcessedText = foundText;
+                
+                // Add only the new words to buffer
+                this.addToWordBuffer(newWords);
+              } else {
+                // If no new words extracted, just update the last processed text
+                this.lastProcessedText = foundText;
+              }
             }
+          } else {
+            // Different person - process entire caption without length condition
+            console.log(`🆕 NEW SPEAKER: "${foundText}"`);
+            
+            // Update last processed text
+            this.lastProcessedText = foundText;
+            
+            // Process the entire new caption
+            this.addToWordBuffer(foundText);
           }
+          
+          // Update the last seen caption element AFTER processing
+          this.lastSeenCaptionElement = captionContainer as HTMLElement;
         }
       }
     } catch (error) {
@@ -410,7 +467,6 @@ class GoogleMeetCaptionDetector {
     return '';
   }
 
-
   private isValidClosedCaption(text: string): boolean {
     if (!text || text.trim().length === 0) {
       return false;
@@ -513,6 +569,8 @@ class GoogleMeetCaptionDetector {
     }
   }
 
+
+
   private playTranslatedSpeech(text: string) {
     // Use browser's built-in speech synthesis
     if ('speechSynthesis' in window) {
@@ -575,6 +633,7 @@ class GoogleMeetCaptionDetector {
       return;
     }
     
+    
     console.log(`\n🔊 ELEVENLABS AUDIO PLAYBACK:`);
     console.log(`📊 Audio data type: ${typeof audioData}`);
     console.log(`📊 Audio data length: ${audioData.length} items`);
@@ -629,6 +688,7 @@ class GoogleMeetCaptionDetector {
       source.onended = () => {
         console.log('🔊 ElevenLabs audio playback finished');
         audioContext.close();
+        
       };
       
       source.addEventListener('error', (error) => {
@@ -729,6 +789,8 @@ class GoogleMeetCaptionDetector {
       this.translationOverlay.remove();
     }
   }
+
+
 }
 
 // Initialize when the page loads

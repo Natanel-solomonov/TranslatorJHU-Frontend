@@ -433,6 +433,7 @@ const PopupApp: React.FC = () => {
   };
 
 
+
   const handleLogout = () => {
     authService.logout();
     setCurrentUser(null);
@@ -646,6 +647,7 @@ const PopupApp: React.FC = () => {
           </div>
         </div>
       </div>
+
 
       {/* Controls */}
       <div className="p-4 flex-1 flex flex-col justify-center">
