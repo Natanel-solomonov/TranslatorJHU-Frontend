@@ -354,6 +354,18 @@ class GoogleMeetCaptionDetector {
     console.log(`📝 Sending text: "${text}"`);
     console.log(`🌍 Target language: ${this.targetLanguage}`);
 
+    // Get user's voice ID from storage
+    let voiceId = null;
+    try {
+      const userData = await chrome.storage.local.get(['currentUser']);
+      if (userData.currentUser && userData.currentUser.voiceId) {
+        voiceId = userData.currentUser.voiceId;
+        console.log(`🎤 Using custom voice ID: ${voiceId}`);
+      }
+    } catch (error) {
+      console.log('⚠️ Could not get user voice ID:', error);
+    }
+
     try {
       const response = await fetch('http://localhost:8080/api/caption-text', {
         method: 'POST',
@@ -363,7 +375,8 @@ class GoogleMeetCaptionDetector {
         body: JSON.stringify({
           text: text,
           language: 'en',
-          targetLanguage: this.targetLanguage
+          targetLanguage: this.targetLanguage,
+          voiceId: voiceId
         })
       });
 
@@ -385,7 +398,7 @@ class GoogleMeetCaptionDetector {
         
         // Play ElevenLabs TTS audio if available, otherwise fallback to browser TTS
         if (result.translatedText && result.translatedText !== 'Translation failed') {
-          if (result.audioData && result.audioData.length > 0) {
+          if (result.audioData && result.audioData !== null && result.audioData.length > 0) {
             console.log(`🔊 Playing ElevenLabs TTS audio for: "${result.translatedText}"`);
             console.log(`🔊 Audio data length: ${result.audioData.length} bytes`);
             this.playElevenLabsAudio(result.audioData);
@@ -478,7 +491,13 @@ class GoogleMeetCaptionDetector {
       // Add event listeners for debugging
       utterance.onstart = () => console.log('🔊 Speech started');
       utterance.onend = () => console.log('🔊 Speech ended');
-      utterance.onerror = (event) => console.error('🔊 Speech error:', event.error);
+      utterance.onerror = (event) => {
+        console.error('🔊 Speech error:', event.error);
+        // Don't show "interrupted" as an error if it's just normal cancellation
+        if (event.error !== 'interrupted') {
+          console.error('🔊 Speech synthesis error:', event.error);
+        }
+      };
       
     } else {
       console.warn('Speech synthesis not supported in this browser');
@@ -486,6 +505,12 @@ class GoogleMeetCaptionDetector {
   }
 
   private async playElevenLabsAudio(audioData: string) {
+    // Check if audio data is valid
+    if (!audioData || audioData === null || audioData.length === 0) {
+      console.log('⚠️ No valid audio data provided, falling back to browser TTS');
+      return;
+    }
+    
     console.log(`\n🔊 ELEVENLABS AUDIO PLAYBACK:`);
     console.log(`📊 Audio data type: ${typeof audioData}`);
     console.log(`📊 Audio data length: ${audioData.length} characters`);

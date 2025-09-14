@@ -3,12 +3,10 @@ import { authService, VoiceEnrollment as VoiceEnrollmentType } from '../services
 
 interface VoiceEnrollmentProps {
   onEnrollmentComplete: () => void;
-  onSkip: () => void;
 }
 
 export const VoiceEnrollment: React.FC<VoiceEnrollmentProps> = ({ 
-  onEnrollmentComplete, 
-  onSkip 
+  onEnrollmentComplete
 }) => {
   const [phrases] = useState(authService.getRandomEnrollmentPhrases(3));
   const [currentPhraseIndex, setCurrentPhraseIndex] = useState(0);
@@ -200,26 +198,28 @@ export const VoiceEnrollment: React.FC<VoiceEnrollmentProps> = ({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg p-8 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-        <div className="text-center mb-6">
-          <h2 className="text-2xl font-bold text-gray-800 mb-2">
-            Voice Enrollment
-          </h2>
-          <p className="text-gray-600 mb-4">
-            Please record yourself saying these phrases to complete your setup
-          </p>
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-800">
-            <div className="flex items-center justify-center">
-              <svg className="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-              </svg>
-              <span><strong>Tip:</strong> When prompted, allow microphone access for the best experience</span>
+      <div className="bg-white rounded-lg w-[500px] h-[700px] flex flex-col overflow-y-auto">
+        <div className="p-6">
+          <div className="text-center mb-6">
+            <h2 className="text-2xl font-bold text-gray-800 mb-2">
+              Voice Enrollment
+            </h2>
+            <p className="text-gray-600 mb-4">
+              Please record yourself saying these phrases to complete your setup
+            </p>
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-800">
+              <div className="flex items-center justify-center">
+                <svg className="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                </svg>
+                <span><strong>Tip:</strong> When prompted, allow microphone access for the best experience</span>
+              </div>
             </div>
           </div>
         </div>
 
         {/* Progress indicator */}
-        <div className="mb-6">
+        <div className="px-6 mb-6">
           <div className="flex justify-between text-sm text-gray-600 mb-2">
             <span>Phrase {currentPhraseIndex + 1} of {phrases.length}</span>
             <span>{recordings.filter(r => r.recorded).length} recorded</span>
@@ -233,22 +233,24 @@ export const VoiceEnrollment: React.FC<VoiceEnrollmentProps> = ({
         </div>
 
         {/* Current phrase */}
-        <div className="bg-gray-50 rounded-lg p-6 mb-6">
-          <h3 className="text-lg font-semibold text-gray-800 mb-4">
-            Say this phrase:
-          </h3>
-          <p className="text-xl text-gray-700 leading-relaxed">
-            "{phrases[currentPhraseIndex]}"
-          </p>
-          
-          {currentRecording?.recorded && (
-            <div className="mt-4 flex items-center text-green-600">
-              <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-              </svg>
-              <span className="font-medium">Recorded ✓</span>
-            </div>
-          )}
+        <div className="px-6 mb-6">
+          <div className="bg-gray-50 rounded-lg p-6">
+            <h3 className="text-lg font-semibold text-gray-800 mb-4">
+              Say this phrase:
+            </h3>
+            <p className="text-xl text-gray-700 leading-relaxed">
+              "{phrases[currentPhraseIndex]}"
+            </p>
+            
+            {currentRecording?.recorded && (
+              <div className="mt-4 flex items-center text-green-600">
+                <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                </svg>
+                <span className="font-medium">Recorded ✓</span>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Recording controls */}
@@ -290,7 +292,7 @@ export const VoiceEnrollment: React.FC<VoiceEnrollmentProps> = ({
             </button>
             <button
               onClick={nextPhrase}
-              disabled={currentPhraseIndex === phrases.length - 1}
+              disabled={currentPhraseIndex === phrases.length - 1 || !currentRecording?.recorded}
               className="px-6 py-3 text-gray-600 bg-gray-100 border border-gray-300 rounded-xl hover:bg-gray-200 hover:border-gray-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 font-medium shadow-sm"
             >
               Next →
@@ -298,13 +300,7 @@ export const VoiceEnrollment: React.FC<VoiceEnrollmentProps> = ({
           </div>
 
           {/* Action buttons */}
-          <div className="flex justify-center space-x-4">
-            <button
-              onClick={onSkip}
-              className="px-8 py-3 text-gray-700 bg-white border-2 border-gray-300 rounded-xl hover:bg-gray-50 hover:border-gray-400 transition-all duration-200 font-semibold shadow-sm"
-            >
-              Skip for now
-            </button>
+          <div className="flex justify-center">
             <button
               onClick={completeEnrollment}
               disabled={!allRecorded || isProcessing}
@@ -316,41 +312,43 @@ export const VoiceEnrollment: React.FC<VoiceEnrollmentProps> = ({
         </div>
 
         {message && (
-          <div className={`mt-6 p-4 rounded-lg text-sm font-medium border-l-4 ${
-            message.includes('success') || message.includes('completed') || message.includes('✓')
-              ? 'bg-green-50 text-green-800 border-green-400'
-              : message.includes('Recording') || message.includes('🎤')
-              ? 'bg-blue-50 text-blue-800 border-blue-400'
-              : 'bg-red-50 text-red-800 border-red-400'
-          }`}>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center">
-                {message.includes('success') || message.includes('completed') || message.includes('✓') ? (
-                  <svg className="w-5 h-5 mr-2 text-green-600" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                  </svg>
-                ) : message.includes('Recording') || message.includes('🎤') ? (
-                  <svg className="w-5 h-5 mr-2 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8a1 1 0 10-2 0A5 5 0 015 8a1 1 0 00-2 0 7.001 7.001 0 006 6.93V17H6a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07z" clipRule="evenodd" />
-                  </svg>
-                ) : (
-                  <svg className="w-5 h-5 mr-2 text-red-600" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                  </svg>
+          <div className="mt-6 p-4">
+            <div className={`p-4 rounded-lg text-sm font-medium border-l-4 ${
+              message.includes('success') || message.includes('completed') || message.includes('✓')
+                ? 'bg-green-50 text-green-800 border-green-400'
+                : message.includes('Recording') || message.includes('🎤')
+                ? 'bg-blue-50 text-blue-800 border-blue-400'
+                : 'bg-red-50 text-red-800 border-red-400'
+            }`}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center">
+                  {message.includes('success') || message.includes('completed') || message.includes('✓') ? (
+                    <svg className="w-5 h-5 mr-2 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                  ) : message.includes('Recording') || message.includes('🎤') ? (
+                    <svg className="w-5 h-5 mr-2 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8a1 1 0 10-2 0A5 5 0 015 8a1 1 0 00-2 0 7.001 7.001 0 006 6.93V17H6a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07z" clipRule="evenodd" />
+                    </svg>
+                  ) : (
+                    <svg className="w-5 h-5 mr-2 text-red-600" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                    </svg>
+                  )}
+                  <span>{message}</span>
+                </div>
+                {message.includes('Failed to access microphone') && (
+                  <button
+                    onClick={() => {
+                      setMessage('');
+                      startRecording();
+                    }}
+                    className="ml-4 px-3 py-1 bg-red-100 hover:bg-red-200 text-red-800 rounded-md text-xs font-medium transition-colors"
+                  >
+                    Try Again
+                  </button>
                 )}
-                <span>{message}</span>
               </div>
-              {message.includes('Failed to access microphone') && (
-                <button
-                  onClick={() => {
-                    setMessage('');
-                    startRecording();
-                  }}
-                  className="ml-4 px-3 py-1 bg-red-100 hover:bg-red-200 text-red-800 rounded-md text-xs font-medium transition-colors"
-                >
-                  Try Again
-                </button>
-              )}
             </div>
           </div>
         )}

@@ -1,8 +1,10 @@
-// Mock authentication service
+// Database-integrated authentication service
 export interface User {
   id: string;
   username: string;
   voiceEnrolled: boolean;
+  voiceId?: string;
+  voiceName?: string;
   createdAt: Date;
   lastLogin: Date;
 }
@@ -15,7 +17,6 @@ export interface VoiceEnrollment {
 }
 
 class AuthService {
-  private users: Map<string, User> = new Map();
   private currentUser: User | null = null;
   private enrollmentPhrases: string[] = [
     "The quick brown fox jumps over the lazy dog",
@@ -26,50 +27,65 @@ class AuthService {
   ];
 
   constructor() {
-    // Initialize with some mock users
-    this.initializeMockUsers();
+    // Load current user from localStorage if available
+    this.loadCurrentUser();
   }
 
-  private initializeMockUsers() {
-    const mockUsers: User[] = [
-      {
-        id: '1',
-        username: 'demo',
-        voiceEnrolled: true,
-        createdAt: new Date('2024-01-01'),
-        lastLogin: new Date()
+  private loadCurrentUser() {
+    try {
+      const stored = localStorage.getItem('currentUser');
+      if (stored) {
+        this.currentUser = JSON.parse(stored);
       }
-    ];
+    } catch (error) {
+      console.error('Error loading current user:', error);
+      this.currentUser = null;
+    }
+  }
 
-    mockUsers.forEach(user => {
-      this.users.set(user.username, user);
-    });
+  private saveCurrentUser() {
+    try {
+      if (this.currentUser) {
+        localStorage.setItem('currentUser', JSON.stringify(this.currentUser));
+      } else {
+        localStorage.removeItem('currentUser');
+      }
+    } catch (error) {
+      console.error('Error saving current user:', error);
+    }
   }
 
   async login(username: string): Promise<{ success: boolean; user?: User; message: string }> {
     try {
-      const user = this.users.get(username.toLowerCase());
+      const response = await fetch('http://localhost:8080/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ username: username.toLowerCase().trim() })
+      });
+
+      const result = await response.json();
       
-      if (!user) {
+      if (result.success) {
+        this.currentUser = result.user;
+        this.saveCurrentUser();
+        return {
+          success: true,
+          user: result.user,
+          message: 'Login successful!'
+        };
+      } else {
         return {
           success: false,
-          message: 'User not found. Please sign up first.'
+          message: result.message || 'Login failed. Please try again.'
         };
       }
-
-      // Update last login
-      user.lastLogin = new Date();
-      this.currentUser = user;
-
-      return {
-        success: true,
-        user,
-        message: 'Login successful!'
-      };
     } catch (error) {
+      console.error('Login error:', error);
       return {
         success: false,
-        message: 'Login failed. Please try again.'
+        message: 'Login failed. Please check your connection and try again.'
       };
     }
   }
@@ -78,13 +94,6 @@ class AuthService {
     try {
       const normalizedUsername = username.toLowerCase().trim();
       
-      if (this.users.has(normalizedUsername)) {
-        return {
-          success: false,
-          message: 'Username already exists. Please choose a different one.'
-        };
-      }
-
       if (normalizedUsername.length < 3) {
         return {
           success: false,
@@ -92,26 +101,35 @@ class AuthService {
         };
       }
 
-      const newUser: User = {
-        id: Date.now().toString(),
-        username: normalizedUsername,
-        voiceEnrolled: false,
-        createdAt: new Date(),
-        lastLogin: new Date()
-      };
+      const response = await fetch('http://localhost:8080/api/auth/signup', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ username: normalizedUsername })
+      });
 
-      this.users.set(normalizedUsername, newUser);
-      this.currentUser = newUser;
-
-      return {
-        success: true,
-        user: newUser,
-        message: 'Account created successfully!'
-      };
+      const result = await response.json();
+      
+      if (result.success) {
+        this.currentUser = result.user;
+        this.saveCurrentUser();
+        return {
+          success: true,
+          user: result.user,
+          message: 'Account created successfully!'
+        };
+      } else {
+        return {
+          success: false,
+          message: result.message || 'Signup failed. Please try again.'
+        };
+      }
     } catch (error) {
+      console.error('Signup error:', error);
       return {
         success: false,
-        message: 'Signup failed. Please try again.'
+        message: 'Signup failed. Please check your connection and try again.'
       };
     }
   }
@@ -122,6 +140,7 @@ class AuthService {
 
   logout(): void {
     this.currentUser = null;
+    this.saveCurrentUser();
   }
 
   getRandomEnrollmentPhrases(count: number = 3): string[] {
@@ -148,18 +167,46 @@ class AuthService {
         };
       }
 
-      // Mark user as voice enrolled
-      this.currentUser.voiceEnrolled = true;
-      this.users.set(this.currentUser.username, this.currentUser);
+      // Send audio data to backend for storage and voice cloning
+      const response = await fetch('http://localhost:8080/api/auth/complete-voice-enrollment', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId: this.currentUser.id,
+          username: this.currentUser.username,
+          audioRecordings: phraseRecordings.map(recording => ({
+            phraseId: recording.phraseId,
+            phrase: recording.phrase,
+            audioData: Array.from(new Uint8Array(recording.audioData)), // Convert ArrayBuffer to array
+            recorded: recording.recorded
+          }))
+        })
+      });
 
-      return {
-        success: true,
-        message: 'Voice enrollment completed successfully!'
-      };
+      const result = await response.json();
+      
+      if (result.success) {
+        // Update current user with new voice enrollment status
+        this.currentUser.voiceEnrolled = true;
+        this.saveCurrentUser();
+        
+        return {
+          success: true,
+          message: 'Voice enrollment completed successfully!'
+        };
+      } else {
+        return {
+          success: false,
+          message: result.message || 'Voice enrollment failed. Please try again.'
+        };
+      }
     } catch (error) {
+      console.error('Voice enrollment error:', error);
       return {
         success: false,
-        message: 'Voice enrollment failed. Please try again.'
+        message: 'Voice enrollment failed. Please check your connection and try again.'
       };
     }
   }

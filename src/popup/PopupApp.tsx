@@ -3,10 +3,8 @@ import {
   Play,
   Square,
   // Mic,
-  MicOff,
   // Settings,
   Languages,
-  Volume2,
   Wifi,
   WifiOff,
   Monitor,
@@ -40,10 +38,13 @@ const PopupApp: React.FC = () => {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showVoiceEnrollment, setShowVoiceEnrollment] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isInitialized, setIsInitialized] = useState(false);
   // const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   useEffect(() => {
-    initializePopup();
+    if (!isInitialized) {
+      initializePopup();
+    }
 
     // Set up periodic connection check
     const connectionInterval = setInterval(() => {
@@ -76,27 +77,37 @@ const PopupApp: React.FC = () => {
     return () => {
       clearInterval(connectionInterval);
     };
-  }, [selectedTab]);
+  }, [isInitialized, selectedTab]);
 
   const initializePopup = async () => {
+    if (isInitialized) return;
+    
     setIsLoading(true);
     
-    // First check if translation is running
-    const isTranslationRunning = await loadTranslationState();
-    
-    // If translation is running, skip authentication
-    if (isTranslationRunning) {
+    try {
+      // First check if translation is running
+      const isTranslationRunning = await loadTranslationState();
+      
+      // If translation is running, skip authentication and load saved settings
+      if (isTranslationRunning) {
+        await loadActiveTabs();
+        await checkConnectionStatus();
+        await loadLanguageSettings(); // Load saved language settings
+        setIsInitialized(true);
+        setIsLoading(false);
+        return;
+      }
+      
+      // If not running, proceed with normal initialization
       await loadActiveTabs();
       await checkConnectionStatus();
+      await checkAuthenticationStatus();
+      setIsInitialized(true);
+    } catch (error) {
+      console.error('Error initializing popup:', error);
+    } finally {
       setIsLoading(false);
-      return;
     }
-    
-    // If not running, proceed with normal initialization
-    await loadActiveTabs();
-    await checkConnectionStatus();
-    await checkAuthenticationStatus();
-    setIsLoading(false);
   };
 
   const loadActiveTabs = async () => {
@@ -159,6 +170,31 @@ const PopupApp: React.FC = () => {
     }
   };
 
+  const loadLanguageSettings = async () => {
+    try {
+      const result = await chrome.storage.local.get(['sourceLanguage', 'targetLanguage']);
+      if (result.sourceLanguage) {
+        setSourceLanguage(result.sourceLanguage);
+      }
+      if (result.targetLanguage) {
+        setTargetLanguage(result.targetLanguage);
+      }
+    } catch (error) {
+      console.error("Failed to load language settings:", error);
+    }
+  };
+
+  const saveLanguageSettings = async (sourceLang: string, targetLang: string) => {
+    try {
+      await chrome.storage.local.set({
+        sourceLanguage: sourceLang,
+        targetLanguage: targetLang
+      });
+    } catch (error) {
+      console.error("Failed to save language settings:", error);
+    }
+  };
+
   const saveTranslationState = async (isRunning: boolean) => {
     try {
       await chrome.storage.local.set({
@@ -207,7 +243,25 @@ const PopupApp: React.FC = () => {
     }
   };
 
+  const checkDatabaseUsers = async () => {
+    try {
+      // This would be a new endpoint to get all users
+      const response = await fetch('http://localhost:8080/api/auth/users');
+      if (response.ok) {
+        const users = await response.json();
+        console.log("Database users:", users);
+      }
+    } catch (error) {
+      console.log("Could not fetch users:", error);
+    }
+  };
+
   const handleStartSession = async () => {
+    console.log("happy");
+    
+    // Check database users before starting
+    await checkDatabaseUsers();
+    
     if (!selectedTab) {
       toast.error("Please select a meeting tab");
       return;
@@ -303,44 +357,6 @@ const PopupApp: React.FC = () => {
     }
   };
 
-  const handleShowCaptions = async () => {
-    if (!selectedTab) return;
-
-    try {
-      const response = await chrome.tabs.sendMessage(selectedTab.id, {
-        type: "showCaptions",
-        data: { sourceLanguage, targetLanguage },
-      });
-      
-      if (response?.success) {
-        toast.success("Captions overlay enabled");
-      } else {
-        throw new Error(response?.error || "Failed to show captions");
-      }
-    } catch (error) {
-      console.error("Failed to show captions:", error);
-      toast.error(`Failed to enable captions: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
-
-  const handleHideCaptions = async () => {
-    if (!selectedTab) return;
-
-    try {
-      const response = await chrome.tabs.sendMessage(selectedTab.id, {
-        type: "hideCaptions",
-      });
-      
-      if (response?.success) {
-        toast.success("Captions overlay disabled");
-      } else {
-        throw new Error(response?.error || "Failed to hide captions");
-      }
-    } catch (error) {
-      console.error("Failed to hide captions:", error);
-      toast.error(`Failed to hide captions: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
 
   const handleManualConnect = async () => {
     if (!selectedTab) {
@@ -412,10 +428,6 @@ const PopupApp: React.FC = () => {
     toast.success("Voice enrollment completed!");
   };
 
-  const handleSkipVoiceEnrollment = () => {
-    setShowVoiceEnrollment(false);
-    toast.success("Voice enrollment skipped. You can complete it later.");
-  };
 
   const handleLogout = () => {
     authService.logout();
@@ -437,8 +449,8 @@ const PopupApp: React.FC = () => {
     { code: "ar", name: "Arabic" },
   ];
 
-  // Show loading screen while initializing
-  if (isLoading) {
+  // Show loading screen while initializing (but not if translation is running)
+  if (isLoading && !isMonitoring) {
     return (
       <div className="w-full h-full bg-white flex flex-col items-center justify-center">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
@@ -448,7 +460,7 @@ const PopupApp: React.FC = () => {
   }
 
   return (
-    <div className="w-full h-full bg-white flex flex-col">
+    <div className="w-[400px] h-[600px] bg-white flex flex-col overflow-hidden">
       <Toaster
         position="top-center"
         toastOptions={{
@@ -462,43 +474,47 @@ const PopupApp: React.FC = () => {
 
       {/* Header */}
       <div className="p-4 border-b border-gray-200">
-        <div className="flex items-center justify-between">
-          <h1 className="text-lg font-semibold text-gray-900">TranslatorJHU</h1>
-          <div className="flex items-center space-x-2">
-            {currentUser && (
+        <div className="flex justify-center">
+          <div className="w-full max-w-[320px] px-4">
+            <div className="flex items-center justify-between">
+              <h1 className="text-lg font-semibold text-gray-900">TranslatorJHU</h1>
               <div className="flex items-center space-x-2">
-                <div className="flex items-center space-x-1 text-sm text-gray-600">
-                  <User className="w-4 h-4" />
-                  <span>{currentUser.username}</span>
-                  {currentUser.voiceEnrolled && (
-                    <div className="w-2 h-2 bg-green-500 rounded-full" title="Voice enrolled"></div>
-                  )}
-                </div>
-                <button
-                  onClick={handleLogout}
-                  className="p-1 text-gray-400 hover:text-gray-600"
-                  title="Logout"
-                >
-                  <LogOut className="w-4 h-4" />
-                </button>
+                {currentUser && (
+                  <div className="flex items-center space-x-2">
+                    <div className="flex items-center space-x-1 text-sm text-gray-600">
+                      <User className="w-4 h-4" />
+                      <span>{currentUser.username}</span>
+                      {currentUser.voiceEnrolled && (
+                        <div className="w-2 h-2 bg-green-500 rounded-full" title="Voice enrolled"></div>
+                      )}
+                    </div>
+                    <button
+                      onClick={handleLogout}
+                      className="p-1 text-gray-400 hover:text-gray-600"
+                      title="Logout"
+                    >
+                      <LogOut className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+                {isConnected ? (
+                  <Wifi className="w-4 h-4 text-green-500" />
+                ) : (
+                  <WifiOff className="w-4 h-4 text-red-500" />
+                )}
+                {isMonitoring && (
+                  <div className="flex items-center space-x-1">
+                    <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+                    <span className="text-xs text-red-600 font-medium">Monitoring</span>
+                  </div>
+                )}
               </div>
-            )}
-            {isConnected ? (
-              <Wifi className="w-4 h-4 text-green-500" />
-            ) : (
-              <WifiOff className="w-4 h-4 text-red-500" />
-            )}
-            {isMonitoring && (
-              <div className="flex items-center space-x-1">
-                <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
-                <span className="text-xs text-red-600 font-medium">Monitoring</span>
-              </div>
-            )}
+            </div>
+            <p className="text-sm text-gray-500 mt-1">
+              {isMonitoring ? "Translation is active - monitoring captions" : "Real-time translation for video meetings"}
+            </p>
           </div>
         </div>
-        <p className="text-sm text-gray-500 mt-1">
-          {isMonitoring ? "Translation is active - monitoring captions" : "Real-time translation for video meetings"}
-        </p>
       </div>
 
       {/* Connection Status */}
@@ -527,129 +543,121 @@ const PopupApp: React.FC = () => {
       </div>
 
       {/* Meeting Tab Selection */}
-      <div className="p-4 border-b border-gray-200">
+      <div className="p-4 border-b border-gray-200 flex-shrink-0">
         <label className="block text-sm font-medium text-gray-700 mb-2">
           Active Meeting Tabs
         </label>
 
-        {activeTabs.length === 0 ? (
-          <div className="flex items-center space-x-2 text-sm text-gray-500 p-3 bg-gray-50 rounded-lg">
-            <AlertCircle className="w-4 h-4" />
-            <span>No meeting tabs detected</span>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {activeTabs.map((tab) => (
-              <div
-                key={tab.id}
-                className={`flex items-center space-x-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                  selectedTab?.id === tab.id
-                    ? "border-primary-500 bg-primary-50"
-                    : "border-gray-200 hover:bg-gray-50"
-                }`}
-                onClick={() => setSelectedTab(tab)}
-              >
-                <Monitor className="w-4 h-4 text-gray-500" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-gray-900 truncate">
-                    {getTabPlatform(tab.url)}
-                  </p>
-                  <p className="text-xs text-gray-500 truncate">{tab.title}</p>
-                </div>
+        <div className="flex justify-center">
+          <div className="w-full max-w-[320px] px-4">
+            {activeTabs.length === 0 ? (
+              <div className="flex items-center space-x-2 text-sm text-gray-500 p-3 bg-gray-50 rounded-lg">
+                <AlertCircle className="w-4 h-4" />
+                <span>No meeting tabs detected</span>
               </div>
-            ))}
+            ) : (
+              <div className="space-y-2">
+                {activeTabs.map((tab) => (
+                  <div
+                    key={tab.id}
+                    className={`flex items-center space-x-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                      selectedTab?.id === tab.id
+                        ? "border-primary-500 bg-primary-50"
+                        : "border-gray-200 hover:bg-gray-50"
+                    }`}
+                    onClick={() => setSelectedTab(tab)}
+                  >
+                    <Monitor className="w-4 h-4 text-gray-500" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900 truncate">
+                        {getTabPlatform(tab.url)}
+                      </p>
+                      <p className="text-xs text-gray-500 truncate">{tab.title}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
 
       {/* Language Selection */}
-      <div className="p-4 border-b border-gray-200">
+      <div className="p-4 border-b border-gray-200 flex-shrink-0">
         <div className="flex items-center space-x-2 mb-3">
           <Languages className="w-4 h-4 text-gray-500" />
           <span className="text-sm font-medium text-gray-700">Languages</span>
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs text-gray-600 mb-1">From</label>
-            <select
-              value={sourceLanguage}
-              onChange={(e) => setSourceLanguage(e.target.value)}
-              className="w-full text-sm border border-gray-300 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary-500"
-            >
-              {languages.map((lang) => (
-                <option key={lang.code} value={lang.code}>
-                  {lang.name}
-                </option>
-              ))}
-            </select>
-          </div>
+        <div className="flex justify-center">
+          <div className="w-full max-w-[320px] px-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">From</label>
+                <select
+                  value={sourceLanguage}
+                  onChange={(e) => {
+                    setSourceLanguage(e.target.value);
+                    saveLanguageSettings(e.target.value, targetLanguage);
+                  }}
+                  className="w-full text-sm border border-gray-300 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                >
+                  {languages.map((lang) => (
+                    <option key={lang.code} value={lang.code}>
+                      {lang.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-          <div>
-            <label className="block text-xs text-gray-600 mb-1">To</label>
-            <select
-              value={targetLanguage}
-              onChange={(e) => setTargetLanguage(e.target.value)}
-              className="w-full text-sm border border-gray-300 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary-500"
-            >
-              {languages.map((lang) => (
-                <option key={lang.code} value={lang.code}>
-                  {lang.name}
-                </option>
-              ))}
-            </select>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">To</label>
+                <select
+                  value={targetLanguage}
+                  onChange={(e) => {
+                    setTargetLanguage(e.target.value);
+                    saveLanguageSettings(sourceLanguage, e.target.value);
+                  }}
+                  className="w-full text-sm border border-gray-300 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                >
+                  {languages.map((lang) => (
+                    <option key={lang.code} value={lang.code}>
+                      {lang.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
           </div>
         </div>
       </div>
 
       {/* Controls */}
-      <div className="p-4 space-y-3">
-        {!isMonitoring ? (
-          <button
-            onClick={handleStartSession}
-            disabled={!selectedTab || !isConnected}
-            className="w-full flex items-center justify-center space-x-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-medium py-2 px-4 rounded-lg transition-colors"
-          >
-            <Play className="w-4 h-4" />
-            <span>Start Translation</span>
-          </button>
-        ) : (
-          <button
-            onClick={handleStopSession}
-            className="w-full flex items-center justify-center space-x-2 bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded-lg transition-colors"
-          >
-            <Square className="w-4 h-4" />
-            <span>Stop Translation</span>
-          </button>
-        )}
-
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            onClick={handleShowCaptions}
-            disabled={!selectedTab}
-            className="flex items-center justify-center space-x-1 bg-primary-600 hover:bg-primary-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-sm font-medium py-2 px-3 rounded-lg transition-colors"
-          >
-            <Volume2 className="w-4 h-4" />
-            <span>Show Captions</span>
-          </button>
-
-          <button
-            onClick={handleHideCaptions}
-            disabled={!selectedTab}
-            className="flex items-center justify-center space-x-1 bg-gray-600 hover:bg-gray-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-sm font-medium py-2 px-3 rounded-lg transition-colors"
-          >
-            <MicOff className="w-4 h-4" />
-            <span>Hide Captions</span>
-          </button>
+      <div className="p-4 flex-1 flex flex-col justify-center">
+        <div className="flex justify-center">
+          <div className="w-full max-w-[320px] px-4">
+            {!isMonitoring ? (
+              <button
+                onClick={handleStartSession}
+                disabled={!selectedTab || !isConnected}
+                className="w-full flex items-center justify-center space-x-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-medium py-3 px-6 rounded-lg transition-colors shadow-lg"
+              >
+                <Play className="w-5 h-5" />
+                <span>Start Translation</span>
+              </button>
+            ) : (
+              <button
+                onClick={handleStopSession}
+                className="w-full flex items-center justify-center space-x-2 bg-red-600 hover:bg-red-700 text-white font-medium py-3 px-6 rounded-lg transition-colors shadow-lg"
+              >
+                <Square className="w-5 h-5" />
+                <span>Stop Translation</span>
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Footer */}
-      <div className="mt-auto p-4 border-t border-gray-200">
-        <div className="text-xs text-gray-500 text-center">
-          Natural voice synthesis with ElevenLabs
-        </div>
-      </div>
 
       {/* Authentication Modals - Only show when translation is not running */}
       {!isMonitoring && showAuthModal && (
@@ -659,7 +667,6 @@ const PopupApp: React.FC = () => {
       {!isMonitoring && showVoiceEnrollment && (
         <VoiceEnrollment 
           onEnrollmentComplete={handleVoiceEnrollmentComplete}
-          onSkip={handleSkipVoiceEnrollment}
         />
       )}
     </div>
