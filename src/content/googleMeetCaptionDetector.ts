@@ -14,6 +14,12 @@ class GoogleMeetCaptionDetector {
   private checkInterval: number | null = null;
   private monitoringActive = false;
   private lastTranslationTime = 0; // Throttling for translation requests
+  private wordBuffer = ''; // Buffer to accumulate words before translating
+  private bufferTimeout: number | null = null; // Timeout for word buffer
+  private processedTexts = new Set<string>(); // Track processed texts to prevent duplicates
+  private skippedTexts = new Set<string>(); // Track permanently skipped texts to prevent infinite loops
+  private baselineText = ''; // Text that was present when monitoring started
+  private isFirstCaption = true; // Track if this is the first caption after starting
 
   constructor() {
     this.init();
@@ -93,13 +99,18 @@ class GoogleMeetCaptionDetector {
     this.isMonitoring = true;
     this.monitoringActive = true;
     this.processedWords.clear(); // Reset processed words when starting
+    this.processedTexts.clear(); // Reset processed texts
+    this.skippedTexts.clear(); // Reset skipped texts
+    this.baselineText = ''; // Reset baseline
+    this.isFirstCaption = true; // Reset first caption flag
+    this.lastProcessedText = ''; // Reset last processed text
 
     this.setupMutationObserver();
     this.checkInterval = window.setInterval(() => {
       if (this.monitoringActive) {
         this.checkForClosedCaptions();
       }
-    }, 2000); // 2 seconds for better responsiveness
+    }, 500); // 500ms for faster response
     this.checkForClosedCaptions();
   }
 
@@ -116,6 +127,17 @@ class GoogleMeetCaptionDetector {
       clearInterval(this.checkInterval);
       this.checkInterval = null;
     }
+    
+    // Clear word buffer and timeout
+    if (this.bufferTimeout) {
+      clearTimeout(this.bufferTimeout);
+      this.bufferTimeout = null;
+    }
+    this.wordBuffer = '';
+    this.processedTexts.clear();
+    this.skippedTexts.clear();
+    this.baselineText = '';
+    this.isFirstCaption = true;
   }
 
   private setupMutationObserver() {
@@ -158,7 +180,7 @@ class GoogleMeetCaptionDetector {
           if (this.monitoringActive) {
             this.checkForClosedCaptions();
           }
-        }, 100);
+        }, 2000); // Increased debounce to 2 seconds
       }
     });
 
@@ -175,26 +197,52 @@ class GoogleMeetCaptionDetector {
       return; // Don't check if monitoring is not active
     }
     
-    // Try multiple selectors for Google Meet captions
+    // Try multiple selectors for Google Meet captions (updated for 2024)
     const captionSelectors = [
-      '[jsname="r4nke"]', // Main caption container
-      '[data-is-muted="false"] [jsname="r4nke"]', // Unmuted captions
-      '[role="region"] [jsname="r4nke"]', // Region-based captions
-      '.captions-text', // Alternative caption class
-      '[aria-live="polite"]', // Live region captions
-      '[data-caption-text]' // Data attribute captions
+      // ACTUAL selector for Google Meet captions (provided by user)
+      '#yDmH0d > c-wiz > div > div > div.TKU8Od > div.crqnQb > div > div.fJsklc.nulMpf.Didmac.G03iKb.hLkVuf > div > div > div.DtJ7e > div > div > div.nMcdL.bj4p3b > div.ygicle.VbkSUe',
+      // Shorter version of the same selector
+      'div.ygicle.VbkSUe',
+      'div.nMcdL.bj4p3b > div.ygicle.VbkSUe',
+      // Fallback selectors
+      '[jsname="tgaKEf"]',
+      '[jsname="tgaKEf"] span',
+      '[jsname="tgaKEf"] div',
+      '[jsname="r4nke"] span[jsname="r4nke"]',
+      '[jsname="r4nke"] div[jsname="r4nke"]',
+      'span[jsname="r4nke"]',
+      'div[jsname="r4nke"]'
     ];
     
     try {
       let captionContainer = null;
       let foundText = '';
       
-      // Try each selector until we find captions
+      // Try each selector until we find captions (silent search)
       for (const selector of captionSelectors) {
-        const element = document.querySelector(selector);
-        if (element) {
+        const elements = document.querySelectorAll(selector);
+        
+        for (const element of elements) {
           const text = element.textContent?.trim();
-          if (text && text.length >= 10 && this.isValidClosedCaption(text)) {
+          
+          if (text && text.length >= 3 && this.isValidClosedCaption(text)) {
+            captionContainer = element;
+            foundText = text;
+            break;
+          }
+        }
+        
+        if (foundText) break;
+      }
+      
+      // If no captions found with specific selectors, try a broader search for any text that looks like speech
+      if (!foundText) {
+        // Try to find any element with caption-related classes
+        const captionElements = document.querySelectorAll('div[class*="ygicle"], div[class*="VbkSUe"], div[class*="nMcdL"], div[class*="bj4p3b"]');
+        
+        for (const element of captionElements) {
+          const text = element.textContent?.trim();
+          if (text && text.length >= 3 && text.length <= 200 && this.isValidClosedCaption(text)) {
             captionContainer = element;
             foundText = text;
             break;
@@ -202,157 +250,184 @@ class GoogleMeetCaptionDetector {
         }
       }
       
-      if (captionContainer && foundText && foundText !== this.lastProcessedText) {
-        // Add throttling to prevent too many requests
-        const now = Date.now();
-        if (now - this.lastTranslationTime < 1500) { // 1.5 second minimum between translations
-          return;
+      if (captionContainer && foundText) {
+        // On first caption after starting monitoring, set baseline
+        if (this.isFirstCaption) {
+          this.baselineText = foundText;
+          this.lastProcessedText = foundText;
+          this.isFirstCaption = false;
+          console.log(`🎯 BASELINE SET: "${foundText}"`);
+          return; // Don't process the baseline text
         }
-        this.lastTranslationTime = now;
-        console.log(`✅ Valid CLOSED CAPTION: ${foundText}`);
-        this.processElement(captionContainer);
+        
+        // Check if this text has been permanently skipped
+        if (this.skippedTexts.has(foundText)) {
+          console.log(`🚫 PERMANENTLY SKIPPED: "${foundText}"`);
+          return; // Skip this text permanently
+        }
+        
+        // No content filtering - process all new content
+        
+        // Only process if text is different from last processed AND longer than baseline
+        if (foundText !== this.lastProcessedText && foundText.length > this.baselineText.length) {
+          // Check if this is actually new content (longer than what we've seen)
+          const isNewContent = foundText.length > this.lastProcessedText.length;
+          
+          if (isNewContent) {
+            console.log(`🎯 NEW CAPTION DETECTED: "${foundText}"`);
+            
+            // Extract only the NEW words that were added
+            const newWords = this.extractNewWords(this.lastProcessedText, foundText);
+            
+            if (newWords && newWords.trim().length > 0) {
+              console.log(`🆕 NEW WORDS EXTRACTED: "${newWords}"`);
+              
+              // Update last processed text first
+              this.lastProcessedText = foundText;
+              
+              // Add only the new words to buffer
+              this.addToWordBuffer(newWords);
+            } else {
+              // If no new words extracted, just update the last processed text
+              this.lastProcessedText = foundText;
+            }
+          }
+        }
       }
     } catch (error) {
       console.error('Caption detection error:', error);
     }
   }
 
-  private processElement(element: Element) {
-    if (!this.monitoringActive) return;
-    
-    const text = element.textContent?.trim();
-    if (!text || text === this.lastProcessedText || text.length < 5) {
-      return;
-    }
 
-    // Check if this looks like a real CLOSED CAPTION
-    if (this.isValidClosedCaption(text)) {
-      // Process word by word to avoid repetition
-      const words = text.split(/\s+/).filter(word => word.length > 0);
-      const newWords = words.filter(word => !this.processedWords.has(word.toLowerCase()));
-      
-      if (newWords.length > 0) {
-        console.log('✅ Valid CLOSED CAPTION:', text);
-        
-        // Add new words to processed set
-        newWords.forEach(word => this.processedWords.add(word.toLowerCase()));
-        
-        // Send only new words for translation
-        const newText = newWords.join(' ');
-        this.lastProcessedText = text;
-        this.sendForTranslation(newText);
+
+  private addToWordBuffer(text: string) {
+    // Check if this text has been permanently skipped
+    if (this.skippedTexts.has(text)) {
+      console.log(`🚫 PERMANENTLY SKIPPED: "${text}"`);
+      return; // Skip this text permanently
+    }
+    
+    // No content filtering - process all new content
+    
+    // Only process if this is actually new content
+    if (this.processedTexts.has(text)) {
+      console.log(`⚠️ SKIPPING DUPLICATE: "${text}"`);
+      return; // Already processed, don't process again
+    }
+    
+    // Add new words to the buffer (accumulate them)
+    if (this.wordBuffer) {
+      this.wordBuffer += ' ' + text;
+    } else {
+      this.wordBuffer = text;
+    }
+    
+    console.log(`📝 WORD BUFFER: "${this.wordBuffer}"`);
+    
+    // Clear existing timeout
+    if (this.bufferTimeout) {
+      clearTimeout(this.bufferTimeout);
+    }
+    
+    // Set timeout to process buffer after 2 seconds of no new words
+    this.bufferTimeout = window.setTimeout(() => {
+      this.processWordBuffer();
+    }, 2000);
+  }
+
+  private processWordBuffer() {
+    if (this.wordBuffer.trim().length > 0) {
+      // Check if this text has been permanently skipped
+      if (this.skippedTexts.has(this.wordBuffer)) {
+        console.log(`🚫 PERMANENTLY SKIPPED: "${this.wordBuffer}"`);
+        this.wordBuffer = '';
+        return;
       }
+      
+      // No content filtering - process all new content
+      
+      // Check if we've already processed this exact text
+      if (this.processedTexts.has(this.wordBuffer)) {
+        console.log(`⚠️ SKIPPING DUPLICATE: "${this.wordBuffer}"`);
+        this.wordBuffer = '';
+        return;
+      }
+      
+      console.log(`🔄 PROCESSING BUFFER: "${this.wordBuffer}"`);
+      
+      // Add throttling to prevent too many requests
+      const now = Date.now();
+      if (now - this.lastTranslationTime < 2000) { // 2 second minimum between translations
+        // Reschedule if too soon
+        this.bufferTimeout = window.setTimeout(() => {
+          this.processWordBuffer();
+        }, 2000);
+        return;
+      }
+      this.lastTranslationTime = now;
+      
+      // Mark this text as processed BEFORE sending to prevent race conditions
+      this.processedTexts.add(this.wordBuffer);
+      
+      // Process the buffered words
+      this.sendForTranslation(this.wordBuffer);
+      
+      // Clear the buffer to prevent reprocessing
+      this.wordBuffer = '';
     }
   }
+
+  private extractNewWords(previousText: string, currentText: string): string {
+    if (!previousText) {
+      return currentText; // If no previous text, return the entire current text
+    }
+
+    // Normalize text by removing punctuation for comparison
+    const normalizeText = (text: string) => text.replace(/[.,!?;:]/g, '').toLowerCase().trim();
+    
+    const normalizedPrevious = normalizeText(previousText);
+    const normalizedCurrent = normalizeText(currentText);
+    
+    // Check if current text is actually longer (has new words)
+    if (normalizedCurrent.length <= normalizedPrevious.length) {
+      return ''; // No new words
+    }
+    
+    // Check if current text starts with previous text (is an extension)
+    if (!normalizedCurrent.startsWith(normalizedPrevious)) {
+      return ''; // Not an extension, might be a completely different caption
+    }
+    
+    // Extract the new part from the original text (preserving punctuation)
+    const newPart = currentText.substring(previousText.length).trim();
+    
+    // Only return if we have meaningful new content (at least 2 characters)
+    if (newPart.length >= 2) {
+      return newPart;
+    }
+    
+    return '';
+  }
+
 
   private isValidClosedCaption(text: string): boolean {
-    // ULTRA-STRICT filtering - only accept actual speech captions
-    const uiPatterns = [
-      // Google Meet UI elements
-      /^(Copy link|Add others|Your meeting's ready|close|person_add|content_copy)/i,
-      /^(meet\.google\.com|Join now|Turn on|Turn off)/i,
-      /^(Settings|More options|End call|Mute|Camera)/i,
-      /^(Share screen|Chat|Participants|Record)/i,
-      /^(Present now|Stop presenting|Leave call)/i,
-      /^(Open caption settings|Your camera is on|Your microphone)/i,
-      /^(Others might still see|People who use this meeting)/i,
-      /^(People outside the host|Rooms can also contain)/i,
-      /^(Gemini isn't taking notes)/i,
-      /^(domain_disabled|timer_pause|pen_spark_io|frame_person|visual_effects)/i,
-      /^(backgrounds and effects|more_vert|more options|devices|front_hand)/i,
-      /^(raising your hand|format_size|font size|default|tiny|small|medium)/i,
-      /^(large|huge|jumbo|circle|font color|white|black|blue|green|red)/i,
-      /^(yellow|cyan|magenta|settings|open caption settings|arrow_downward)/i,
-      /^(jump to bottom|reducing noise|keyboard_arrow_up|audio settings)/i,
-      /^(turn on microphone|video settings|videocam|turn off camera)/i,
-      /^(computer_arrow_up|share screen|mood|send a reaction|closed_caption)/i,
-      /^(turn off captions|back_hand|raise hand|more_vert|more options)/i,
-      /^(call_end|leave call|developing an extension|meeting details)/i,
-      /^(people|chat|chat_bubble|chat with everyone|apps|meeting tools)/i,
-      /^(lock_person|host controls|alarm|call ends soon)/i,
-      /^(window\.wiz_progress|window\.wiz_tick|AF_initDataCallback)/i,
-      /^(IJ_values|accounts\.google\.com|myaccount\.google\.com)/i,
-      /^(admin\.google\.com|workspace\.google\.com|goto2\.corp\.google\.com)/i,
-      /^(one\.google\.com|meet\.google\.com|developers\.google\.com)/i,
-      
-      // General UI patterns
-      /^[A-Z\s]+$/, // All caps (likely UI labels)
-      /^\d+$/, // Just numbers
-      /^[^\w\s]+$/, // Just symbols
-      /^(OK|Cancel|Save|Delete|Edit)$/i,
-      /^(Yes|No|Maybe)$/i,
-      /^(person_add|content_copy|close|ready)/i,
-      /^(meeting|call|video|audio)/i,
-      /^(link|share|copy|paste)/i,
-      /^(button|icon|menu|toolbar)/i,
-      /^[a-z]+[A-Z][a-z]+/, // camelCase
-      /^[a-z]+_[a-z]+/, // snake_case
-      /^[a-z]+\.[a-z]+/, // dot notation
-      /^[a-z]+[A-Z]/, // mixed case starting with lowercase
-      /^[A-Z][a-z]+[A-Z]/, // PascalCase
-      /^.{1,30}$/, // Very short text (1-30 chars)
-      
-      // More specific UI patterns
-      /^(Know\. It's yeah\. Richard)/i, // Common UI text
-      /^(Your camera is on\. Your microphone)/i,
-      /^(Others might still see your full video)/i,
-      /^(Or share this meeting link)/i,
-      /^(People who use this meeting link)/i,
-      /^(People outside the host's organization)/i,
-      /^(Gemini isn't taking notes)/i,
-      /^(Are you talking\? Your mic is off)/i,
-      /^(Click the mic to turn it on)/i,
-      /^(Richard\. William\.)/i, // Names without context
-      /^(keyboard_arrow_up|mic_off|devices|domain_disabled)/i,
-      /^(timer_pause|pen_spark_io|frame_person|visual_effects)/i,
-      /^(backgrounds and effects|more_vert|more options)/i,
-      /^(AlexDavidAnimations|wem-czrf-pnx)/i, // Meeting-specific text
-      /^(4:25PM|arrow_downward|jump to bottom)/i,
-      /^(reducing noise|keyboard_arrow_up|audio settings)/i,
-      /^(turn on microphone|video settings|videocam)/i,
-      /^(turn off camera|computer_arrow_up|share screen)/i,
-      /^(mood|send a reaction|closed_caption|turn off captions)/i,
-      /^(back_hand|raise hand|more_vert|more options)/i,
-      /^(call_end|leave call|developing an extension)/i,
-      /^(meeting details|people|chat|chat_bubble)/i,
-      /^(chat with everyone|apps|meeting tools)/i,
-      /^(lock_person|host controls|alarm|call ends soon)/i,
-      /^(window\.wiz_progress|window\.wiz_tick)/i,
-      /^(AF_initDataCallback|IJ_values)/i,
-      /^(accounts\.google\.com|myaccount\.google\.com)/i,
-      /^(admin\.google\.com|workspace\.google\.com)/i,
-      /^(goto2\.corp\.google\.com|one\.google\.com)/i,
-      /^(meet\.google\.com|developers\.google\.com)/i,
-      /^(https?:\/\/|www\.|\.com|\.org|\.net)/i, // URLs
-      /^[0-9]+:[0-9]+[AP]M$/i, // Time stamps
-      /^[a-zA-Z0-9\-_]+$/i, // Just alphanumeric with dashes/underscores
-      /^[^a-zA-Z]*$/, // No letters at all
-      /^.{1,50}$/ // Very short text
-    ];
-
-    // Check if text matches any UI pattern
-    for (const pattern of uiPatterns) {
-      if (pattern.test(text)) {
-        return false;
-      }
+    if (!text || text.trim().length === 0) {
+      return false;
     }
 
-    // Must be at least 20 characters for real speech
-    const isLongEnough = text.length >= 20;
+    // Very simple validation - just check for basic speech patterns
     const hasLetters = /[a-zA-Z]/.test(text);
-    const looksLikeSpeech = /^[a-zA-Z\s.,!?\-']+$/.test(text);
-    const hasSpaces = text.includes(' '); // Real speech has spaces
-    const hasMultipleWords = text.split(' ').length >= 3; // At least 3 words
+    const isLongEnough = text.length >= 3; // Very short minimum
+    const notJustNumbers = !/^[0-9\s.,!?\-']+$/.test(text); // Not just numbers and punctuation
     
-    return isLongEnough && hasLetters && looksLikeSpeech && hasSpaces && hasMultipleWords;
+    return hasLetters && isLongEnough && notJustNumbers;
   }
+
+
 
   private async sendForTranslation(text: string) {
     if (!this.isConnected) return;
-
-    console.log(`\n🎯 FRONTEND TRANSLATION REQUEST:`);
-    console.log(`📝 Sending text: "${text}"`);
-    console.log(`🌍 Target language: ${this.targetLanguage}`);
 
     // Get user's voice ID from storage
     let voiceId = null;
@@ -360,10 +435,9 @@ class GoogleMeetCaptionDetector {
       const userData = await chrome.storage.local.get(['currentUser']);
       if (userData.currentUser && userData.currentUser.voiceId) {
         voiceId = userData.currentUser.voiceId;
-        console.log(`🎤 Using custom voice ID: ${voiceId}`);
       }
     } catch (error) {
-      console.log('⚠️ Could not get user voice ID:', error);
+      // Silent error handling
     }
 
     try {
@@ -380,15 +454,10 @@ class GoogleMeetCaptionDetector {
         })
       });
 
-      console.log(`📡 Response status: ${response.status}`);
-
       if (response.ok) {
         const result = await response.json();
-        console.log(`✅ Translation received:`);
-        console.log(`   📝 Original: "${result.originalText || text}"`);
-        console.log(`   🌍 Translated: "${result.translatedText}"`);
-        console.log(`   📊 Confidence: ${result.confidence || 0.8}`);
-        console.log(`   🔊 Audio data: ${result.audioData ? `${result.audioData.length} bytes` : 'null'}`);
+        
+        console.log(`Translation: "${result.originalText || text}" → "${result.translatedText}"`);
         
         this.displayTranslation({
           originalText: result.originalText || text,
@@ -399,16 +468,12 @@ class GoogleMeetCaptionDetector {
         // Play ElevenLabs TTS audio if available, otherwise fallback to browser TTS
         if (result.translatedText && result.translatedText !== 'Translation failed') {
           if (result.audioData && result.audioData !== null && result.audioData.length > 0) {
-            console.log(`🔊 Playing ElevenLabs TTS audio for: "${result.translatedText}"`);
-            console.log(`🔊 Audio data length: ${result.audioData.length} bytes`);
             this.playElevenLabsAudio(result.audioData);
           } else {
-            console.log(`🔊 No ElevenLabs audio available (rate limited), using browser TTS for: "${result.translatedText}"`);
             this.playTranslatedSpeech(result.translatedText);
           }
         }
       } else {
-        console.log(`❌ Translation failed with status: ${response.status}`);
         this.displayTranslation({
           originalText: text,
           translatedText: `[Translated: ${text}]`,
@@ -416,8 +481,7 @@ class GoogleMeetCaptionDetector {
         });
       }
     } catch (error) {
-      console.error(`❌ Translation error:`, error);
-      // Don't stop the system on error, just log and continue
+      // Silent error handling
       this.displayTranslation({
         originalText: text,
         translatedText: `[Translation Error: ${text}]`,
@@ -504,7 +568,7 @@ class GoogleMeetCaptionDetector {
     }
   }
 
-  private async playElevenLabsAudio(audioData: string) {
+  private async playElevenLabsAudio(audioData: any) {
     // Check if audio data is valid
     if (!audioData || audioData === null || audioData.length === 0) {
       console.log('⚠️ No valid audio data provided, falling back to browser TTS');
@@ -513,22 +577,37 @@ class GoogleMeetCaptionDetector {
     
     console.log(`\n🔊 ELEVENLABS AUDIO PLAYBACK:`);
     console.log(`📊 Audio data type: ${typeof audioData}`);
-    console.log(`📊 Audio data length: ${audioData.length} characters`);
-    console.log(`📊 First 100 chars: ${audioData.substring(0, 100)}...`);
+    console.log(`📊 Audio data length: ${audioData.length} items`);
+    console.log(`📊 First 10 items: ${JSON.stringify(audioData.slice(0, 10))}...`);
     
     try {
-      // Convert base64 audio data to ArrayBuffer
-      console.log(`🔄 Converting base64 to ArrayBuffer...`);
-      const binaryString = atob(audioData);
-      console.log(`📊 Binary string length: ${binaryString.length} bytes`);
+      let audioBuffer: ArrayBuffer;
       
-      const audioBuffer = new ArrayBuffer(binaryString.length);
-      const view = new Uint8Array(audioBuffer);
-      
-      for (let i = 0; i < binaryString.length; i++) {
-        view[i] = binaryString.charCodeAt(i);
+      // Check if audioData is an array of numbers (from backend) or a base64 string
+      if (Array.isArray(audioData)) {
+        // Convert array of numbers to ArrayBuffer
+        console.log(`🔄 Converting number array to ArrayBuffer...`);
+        audioBuffer = new ArrayBuffer(audioData.length);
+        const view = new Uint8Array(audioBuffer);
+        
+        for (let i = 0; i < audioData.length; i++) {
+          view[i] = audioData[i];
+        }
+        console.log(`📊 ArrayBuffer created: ${audioBuffer.byteLength} bytes`);
+      } else {
+        // Convert base64 audio data to ArrayBuffer
+        console.log(`🔄 Converting base64 to ArrayBuffer...`);
+        const binaryString = atob(audioData);
+        console.log(`📊 Binary string length: ${binaryString.length} bytes`);
+        
+        audioBuffer = new ArrayBuffer(binaryString.length);
+        const view = new Uint8Array(audioBuffer);
+        
+        for (let i = 0; i < binaryString.length; i++) {
+          view[i] = binaryString.charCodeAt(i);
+        }
+        console.log(`📊 ArrayBuffer created: ${audioBuffer.byteLength} bytes`);
       }
-      console.log(`📊 ArrayBuffer created: ${audioBuffer.byteLength} bytes`);
 
       // Create audio context and decode audio
       console.log(`🔄 Creating AudioContext...`);
@@ -576,10 +655,6 @@ class GoogleMeetCaptionDetector {
     this.checkForClosedCaptions();
   }
 
-  public testSpeech() {
-    console.log('🧪 Testing speech synthesis...');
-    this.playTranslatedSpeech('Ricardo. Guillermo. Naranja. Más.');
-  }
 
   public async testElevenLabsAudio() {
     console.log('🧪 Testing ElevenLabs audio...');
@@ -666,7 +741,6 @@ if (document.readyState === 'loading') {
 } else {
   captionDetector = new GoogleMeetCaptionDetector();
   (window as any).captionDetector = captionDetector;
-  (window as any).testSpeech = () => captionDetector.testSpeech();
   (window as any).testElevenLabsAudio = () => captionDetector.testElevenLabsAudio();
   (window as any).debugCaptionDetection = () => captionDetector.debugCaptionDetection();
 }

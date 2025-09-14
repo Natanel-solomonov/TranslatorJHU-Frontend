@@ -29,6 +29,7 @@ const PopupApp: React.FC = () => {
   const [selectedTab, setSelectedTab] = useState<TabInfo | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [isMonitoring, setIsMonitoring] = useState(false);
+  const [isTranslationRunning, setIsTranslationRunning] = useState(false);
   const [sourceLanguage, setSourceLanguage] = useState("en");
   const [targetLanguage, setTargetLanguage] = useState("es");
   const [isConnecting, setIsConnecting] = useState(false);
@@ -87,6 +88,7 @@ const PopupApp: React.FC = () => {
     try {
       // First check if translation is running
       const isTranslationRunning = await loadTranslationState();
+      setIsTranslationRunning(isTranslationRunning);
       
       // If translation is running, skip authentication and load saved settings
       if (isTranslationRunning) {
@@ -304,6 +306,7 @@ const PopupApp: React.FC = () => {
       }
 
       setIsMonitoring(true);
+      setIsTranslationRunning(true);
       saveTranslationState(true);
       toast.success("Caption translation started - monitoring Google Meet captions");
       
@@ -343,6 +346,7 @@ const PopupApp: React.FC = () => {
       });
 
       setIsMonitoring(false);
+      setIsTranslationRunning(false);
       saveTranslationState(false);
       toast.success("Caption translation stopped");
       
@@ -587,6 +591,11 @@ const PopupApp: React.FC = () => {
         <div className="flex items-center space-x-2 mb-3">
           <Languages className="w-4 h-4 text-gray-500" />
           <span className="text-sm font-medium text-gray-700">Languages</span>
+          {isTranslationRunning && (
+            <span className="text-xs text-orange-600 bg-orange-100 px-2 py-1 rounded">
+              Locked during translation
+            </span>
+          )}
         </div>
 
         <div className="flex justify-center">
@@ -600,7 +609,10 @@ const PopupApp: React.FC = () => {
                     setSourceLanguage(e.target.value);
                     saveLanguageSettings(e.target.value, targetLanguage);
                   }}
-                  className="w-full text-sm border border-gray-300 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  disabled={isTranslationRunning}
+                  className={`w-full text-sm border border-gray-300 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary-500 ${
+                    isTranslationRunning ? 'bg-gray-100 cursor-not-allowed opacity-60' : ''
+                  }`}
                 >
                   {languages.map((lang) => (
                     <option key={lang.code} value={lang.code}>
@@ -618,7 +630,10 @@ const PopupApp: React.FC = () => {
                     setTargetLanguage(e.target.value);
                     saveLanguageSettings(sourceLanguage, e.target.value);
                   }}
-                  className="w-full text-sm border border-gray-300 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  disabled={isTranslationRunning}
+                  className={`w-full text-sm border border-gray-300 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary-500 ${
+                    isTranslationRunning ? 'bg-gray-100 cursor-not-allowed opacity-60' : ''
+                  }`}
                 >
                   {languages.map((lang) => (
                     <option key={lang.code} value={lang.code}>
