@@ -25,6 +25,97 @@ class GoogleMeetCaptionDetector {
     this.init();
   }
 
+  /**
+   * Check if the current caption is from "You" (the user) by looking for speaker headers
+   * @param captionElement The caption element to check
+   * @returns true if the caption is from "You", false otherwise
+   */
+  private isFromUser(captionElement: HTMLElement): boolean {
+    try {
+      console.log(`🎤 CHECKING SPEAKER for element:`, captionElement);
+      
+      // Look for speaker header elements with class .KcIKyf
+      const speakerHeaderSelectors = [
+        '.KcIKyf',  // Primary selector for speaker headers
+        '[class*="KcIKyf"]',  // Fallback for variations
+        '.speaker-header',  // Alternative class names
+        '[class*="speaker"]'
+      ];
+
+      // Check if the element itself or its parents contain speaker headers
+      let currentElement: HTMLElement | null = captionElement;
+      let depth = 0;
+      while (currentElement && currentElement !== document.body && depth < 10) {
+        console.log(`🎤 CHECKING ELEMENT (depth ${depth}):`, currentElement.tagName, currentElement.className);
+        
+        // Check if this element is a speaker header
+        for (const selector of speakerHeaderSelectors) {
+          if (currentElement.matches && currentElement.matches(selector)) {
+            const headerText = currentElement.textContent?.trim() || '';
+            console.log(`🎤 FOUND SPEAKER HEADER: "${headerText}"`);
+            
+            if (headerText === 'You' || headerText.includes('You')) {
+              console.log(`🎤 SPEAKER DETECTED: Found "You" in speaker header: "${headerText}"`);
+              return true;
+            }
+          }
+        }
+
+        // Move up to parent element
+        currentElement = currentElement.parentElement;
+        depth++;
+      }
+
+      // Check siblings for speaker headers (most common case)
+      const parent = captionElement.parentElement;
+      if (parent) {
+        console.log(`🎤 CHECKING SIBLINGS in parent:`, parent.tagName, parent.className);
+        const siblings = Array.from(parent.children);
+        const currentIndex = siblings.indexOf(captionElement);
+        
+        // Check previous siblings for speaker headers
+        for (let i = currentIndex - 1; i >= 0; i--) {
+          const sibling = siblings[i] as HTMLElement;
+          const siblingText = sibling.textContent?.trim() || '';
+          
+          console.log(`🎤 CHECKING SIBLING ${i}:`, sibling.tagName, sibling.className, `"${siblingText}"`);
+          
+          // Check if this sibling is a speaker header
+          for (const selector of speakerHeaderSelectors) {
+            if (sibling.matches && sibling.matches(selector)) {
+              console.log(`🎤 FOUND SPEAKER HEADER in sibling: "${siblingText}"`);
+              
+              if (siblingText === 'You' || siblingText.includes('You')) {
+                console.log(`🎤 SPEAKER DETECTED: Found "You" in sibling speaker header: "${siblingText}"`);
+                return true;
+              }
+            }
+          }
+        }
+      }
+
+      // Also check the parent container for speaker headers
+      if (parent) {
+        const speakerHeaders = parent.querySelectorAll('.KcIKyf, [class*="KcIKyf"]');
+        for (const header of speakerHeaders) {
+          const headerText = header.textContent?.trim() || '';
+          console.log(`🎤 FOUND SPEAKER HEADER in parent: "${headerText}"`);
+          
+          if (headerText === 'You' || headerText.includes('You')) {
+            console.log(`🎤 SPEAKER DETECTED: Found "You" in parent speaker header: "${headerText}"`);
+            return true;
+          }
+        }
+      }
+
+      console.log(`🎤 SPEAKER DETECTED: No "You" speaker header found, assuming other speaker`);
+      return false;
+    } catch (error) {
+      console.error('Error checking speaker:', error);
+      return false; // Default to other speaker if error
+    }
+  }
+
   private init() {
     this.createTranslationOverlay();
     this.isConnected = true;
@@ -290,6 +381,18 @@ class GoogleMeetCaptionDetector {
       }
       
       if (captionContainer && foundText) {
+        // Check if this caption is from "You" (the user) - if so, skip translation
+        const isFromUser = this.isFromUser(captionContainer as HTMLElement);
+        console.log(`🎤 SPEAKER CHECK RESULT: isFromUser=${isFromUser} for text="${foundText}"`);
+        
+        if (isFromUser) {
+          console.log(`🎤 SKIPPING TRANSLATION: Caption is from "You" - "${foundText}"`);
+          // Still update tracking to prevent reprocessing
+          this.lastProcessedText = foundText;
+          this.lastSeenCaptionElement = captionContainer as HTMLElement;
+          return;
+        }
+        
         // On first caption after starting monitoring, set baseline
         if (this.isFirstCaption) {
           this.lastProcessedText = foundText;
